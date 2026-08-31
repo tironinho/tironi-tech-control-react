@@ -27,6 +27,9 @@
     "app/**/*.ts",
     "app/**/*.tsx",
     "lib/**/*.ts",
+    "db/**/*.ts",
+    "components/**/*.ts",
+    "components/**/*.tsx",
     "next.config.ts",
     ".next/types/**/*.ts",
     ".next/dev/types/**/*.ts"
@@ -34,7 +37,6 @@
   "exclude": [
     "node_modules",
     "worker",
-    "db",
     "build",
     "examples",
     "scripts",
