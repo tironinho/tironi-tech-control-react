@@ -193,7 +193,13 @@ function Graph({
           data={data}
           style={{ cursor: onSelect ? "pointer" : undefined }}
           onClick={(state) => {
-            const key = state?.activePayload?.[0]?.payload?.key as string | undefined;
+            const index =
+              typeof state?.activeTooltipIndex === "number"
+                ? state.activeTooltipIndex
+                : typeof state?.activeIndex === "number"
+                  ? state.activeIndex
+                  : Number(state?.activeTooltipIndex);
+            const key = Number.isInteger(index) ? data[index]?.key : undefined;
             if (key && onSelect) onSelect(key);
           }}
         >
