@@ -166,17 +166,37 @@ function Status({ children, t = "" }: { children: React.ReactNode; t?: string })
   );
 }
 
-function Graph({ chart }: { chart: DashboardData["chart"] }) {
-  const data = chart.map((row) => ({
-    m: `${monthLabel(row.month)}/${row.month.slice(2, 4)}`,
-    r: row.revenue,
-    d: row.expenses,
-  }));
+function Graph({
+  chart,
+  selected,
+  onSelect,
+}: {
+  chart: DashboardData["chart"];
+  selected?: string | null;
+  onSelect?: (monthKey: string) => void;
+}) {
+  const data = chart.map((row) => {
+    const key = monthKey(row.month);
+    return {
+      key,
+      m: `${monthLabel(row.month)}/${row.month.slice(2, 4)}`,
+      r: row.revenue,
+      d: row.expenses,
+      selected: selected === key,
+    };
+  });
 
   return (
     <div className="graph">
       <ResponsiveContainer>
-        <AreaChart data={data}>
+        <AreaChart
+          data={data}
+          style={{ cursor: onSelect ? "pointer" : undefined }}
+          onClick={(state) => {
+            const key = state?.activePayload?.[0]?.payload?.key as string | undefined;
+            if (key && onSelect) onSelect(key);
+          }}
+        >
           <defs>
             <linearGradient id="g" x1="0" y1="0" x2="0" y2="1">
               <stop stopColor="#3ce4a3" stopOpacity=".35" />
@@ -197,13 +217,94 @@ function Graph({ chart }: { chart: DashboardData["chart"] }) {
               money(Number(value ?? 0)),
               name === "r" ? "Receita" : "Despesas",
             ]}
+            labelFormatter={(label) => `${label} · clique para detalhar`}
           />
           <Area dataKey="r" stroke="#3ce4a3" fill="url(#g)" strokeWidth={2.5} name="r" />
           <Area dataKey="d" stroke="#7088a6" fill="none" strokeWidth={2} name="d" />
         </AreaChart>
       </ResponsiveContainer>
+      {onSelect ? <p className="chart-hint">Clique em um mês do gráfico para ver receitas e despesas.</p> : null}
     </div>
   );
+}
+
+function MonthLedger({
+  month,
+  transactions,
+}: {
+  month: string;
+  transactions: DashboardData["transactions"];
+}) {
+  const rows = transactions
+    .filter((item) => monthKey(item.dueDate) === month)
+    .sort((a, b) => a.dueDate.localeCompare(b.dueDate) || a.id - b.id);
+  const income = rows.filter((item) => item.type === "income");
+  const expenses = rows.filter((item) => item.type === "expense");
+  const incomeTotal = income.reduce((sum, item) => sum + item.amount, 0);
+  const expenseTotal = expenses.reduce((sum, item) => sum + item.amount, 0);
+  const label = `${monthLabel(`${month}-01`)} ${month.slice(0, 4)}`;
+
+  return (
+    <section className="panel month-ledger">
+      <Head
+        n={`Detalhe de ${label}`}
+        s={`Receitas ${money(incomeTotal)} · Despesas ${money(expenseTotal)} · Líquido ${money(incomeTotal - expenseTotal)}`}
+      />
+      <div className="grid">
+        <div>
+          <h4 className="ledger-title green">Receitas ({income.length})</h4>
+          {income.length ? (
+            income.map((item) => (
+              <div className="item" key={item.id}>
+                <i>
+                  {formatDueDate(item.dueDate).slice(0, 2)}
+                  <small>{monthLabel(item.dueDate)}</small>
+                </i>
+                <span>
+                  <b>{item.counterparty}</b>
+                  <small>
+                    {item.description} · {item.category} · {statusLabel(item.status)}
+                  </small>
+                </span>
+                <strong className="green">+ {money(item.amount)}</strong>
+              </div>
+            ))
+          ) : (
+            <p className="empty">Nenhuma receita neste mês.</p>
+          )}
+        </div>
+        <div>
+          <h4 className="ledger-title red">Despesas ({expenses.length})</h4>
+          {expenses.length ? (
+            expenses.map((item) => (
+              <div className="item" key={item.id}>
+                <i>
+                  {formatDueDate(item.dueDate).slice(0, 2)}
+                  <small>{monthLabel(item.dueDate)}</small>
+                </i>
+                <span>
+                  <b>{item.description}</b>
+                  <small>
+                    {item.category} · {statusLabel(item.status)}
+                  </small>
+                </span>
+                <strong className="red">− {money(item.amount)}</strong>
+              </div>
+            ))
+          ) : (
+            <p className="empty">Nenhuma despesa neste mês.</p>
+          )}
+        </div>
+      </div>
+    </section>
+  );
+}
+
+function sliceChart(chart: DashboardData["chart"], fromKey: string, toKey: string) {
+  return chart.filter((row) => {
+    const key = monthKey(row.month);
+    return key >= fromKey && key <= toKey;
+  });
 }
 
 export function DashboardApp({
@@ -228,6 +329,7 @@ export function DashboardApp({
   const [moves, setMoves] = useState<Record<string, string>>({});
   const [sectorName, setSectorName] = useState("");
   const [sectorError, setSectorError] = useState("");
+  const [selectedMonth, setSelectedMonth] = useState(monthKey(new Date().toISOString().slice(0, 10)));
 
   async function logout() {
     await fetch("/api/logout", { method: "POST" });
@@ -334,9 +436,6 @@ export function DashboardApp({
   const nextMonth = addMonths(today, 1);
   const incomeRows = initialData.transactions.filter((item) => item.type === "income");
   const expenseRows = initialData.transactions.filter((item) => item.type === "expense");
-  const upcomingIncome = incomeRows
-    .filter((item) => item.dueDate >= today && item.dueDate <= nextMonth)
-    .reduce((sum, item) => sum + item.amount, 0);
   const guaranteed = incomeRows
     .filter((item) => item.dueDate >= monthStart(today))
     .reduce((sum, item) => sum + item.amount, 0);
@@ -356,11 +455,62 @@ export function DashboardApp({
   const unpaidExpenses = expenseRows
     .filter((item) => item.status !== "paid")
     .reduce((sum, item) => sum + item.amount, 0);
+  const openReceivables = incomeRows
+    .filter((item) => item.status !== "paid")
+    .reduce((sum, item) => sum + item.amount, 0);
+  const openReceivablesCount = incomeRows.filter((item) => item.status !== "paid").length;
+  const paidThisMonth = incomeRows
+    .filter((item) => monthKey(item.dueDate) === thisMonth && item.status === "paid")
+    .reduce((sum, item) => sum + item.amount, 0);
+  const nextMonthKey = monthKey(nextMonth);
+  const nextMonthRevenue =
+    orderedChart.find((row) => monthKey(row.month) === nextMonthKey)?.revenue ??
+    incomeRows
+      .filter((item) => monthKey(item.dueDate) === nextMonthKey)
+      .reduce((sum, item) => sum + item.amount, 0);
+  const nextMonthExpenses =
+    orderedChart.find((row) => monthKey(row.month) === nextMonthKey)?.expenses ??
+    expenseRows
+      .filter((item) => monthKey(item.dueDate) === nextMonthKey)
+      .reduce((sum, item) => sum + item.amount, 0);
+  const recurringIncomeMonthly = incomeRows
+    .filter((item) => item.category === "Receita recorrente" && monthKey(item.dueDate) === thisMonth)
+    .reduce((sum, item) => sum + item.amount, 0);
+  const overdueIncome = incomeRows
+    .filter((item) => item.status !== "paid" && item.dueDate < today)
+    .reduce((sum, item) => sum + item.amount, 0);
+  const clientRevenue = [...incomeRows.reduce((map, item) => {
+    const key = item.counterparty || "Sem cliente";
+    map.set(key, (map.get(key) ?? 0) + item.amount);
+    return map;
+  }, new Map<string, number>())]
+    .map(([name, amount]) => ({ name, amount }))
+    .sort((a, b) => b.amount - a.amount)
+    .slice(0, 5);
+  const categoryBreakdown = [...incomeRows
+    .filter((item) => monthKey(item.dueDate) === selectedMonth)
+    .reduce((map, item) => {
+      map.set(item.category, (map.get(item.category) ?? 0) + item.amount);
+      return map;
+    }, new Map<string, number>())]
+    .map(([name, amount]) => ({ name, amount }))
+    .sort((a, b) => b.amount - a.amount);
+  const overviewChart = sliceChart(
+    orderedChart,
+    monthKey(addMonths(today, -2)),
+    monthKey(addMonths(today, 5)),
+  );
+  const financeChart = sliceChart(
+    orderedChart,
+    monthKey(addMonths(today, -3)),
+    monthKey(addMonths(today, 11)),
+  );
   const avgLtv = initialData.clients.length
     ? initialData.clients.reduce((sum, client) => sum + client.ltv, 0) / initialData.clients.length
     : 0;
   const annualized = revenue * 12;
   const recurringAnnual = mrr * 12;
+  const monthTitle = `${monthLabel(`${thisMonth}-01`)} ${thisMonth.slice(0, 4)}`;
 
   const metrics = (
     <div className="metrics">
@@ -385,9 +535,9 @@ export function DashboardApp({
         t="blue"
       />
       <Metric
-        n="Saldo projetado"
-        v={money(net + upcomingIncome)}
-        s="Próximo mês"
+        n="Receita do próximo mês"
+        v={money(nextMonthRevenue)}
+        s={`Despesas previstas ${money(nextMonthExpenses)}`}
         I={WalletCards}
         t="violet"
       />
@@ -421,14 +571,20 @@ export function DashboardApp({
       <>
         <Title
           n="Boa noite, Tironi."
-          s="Aqui está o panorama da empresa em agosto."
+          s={`Panorama financeiro de ${monthTitle}. Clique no gráfico para detalhar qualquer mês.`}
           action={<CreateButton kind="transaction" onOpen={openCreate} />}
         />
         {metrics}
+        <div className="metrics">
+          <Metric n="A receber" v={money(openReceivables)} s={`${openReceivablesCount} lançamentos abertos`} I={ReceiptText} />
+          <Metric n="Em atraso" v={money(overdueIncome)} s="Receitas vencidas sem pagamento" I={Target} t="amber" />
+          <Metric n="MRR / recorrente no mês" v={money(Math.max(mrr, recurringIncomeMonthly))} s="Receita contratada mensal" I={TrendingUp} t="blue" />
+          <Metric n="A pagar" v={money(unpaidExpenses)} s="Despesas ainda em aberto" I={Banknote} t="violet" />
+        </div>
         <div className="grid wide">
           <section className="panel">
-            <Head n="Evolução financeira" s="Receitas e despesas nos últimos 6 meses" />
-            <Graph chart={initialData.chart} />
+            <Head n="Evolução financeira" s="Receitas e despesas · clique no mês para abrir o detalhe" />
+            <Graph chart={overviewChart} selected={selectedMonth} onSelect={setSelectedMonth} />
           </section>
           <section className="panel">
             <Head n="Pulso da empresa" s="Indicadores estratégicos" />
@@ -448,31 +604,47 @@ export function DashboardApp({
                 </div>
               </div>
             ))}
+            <div className="bar">
+              <span>
+                Recebido neste mês
+                <b>{money(paidThisMonth)}</b>
+              </span>
+              <div>
+                <i style={{ width: `${Math.min(100, percent(paidThisMonth, Math.max(revenue, 1)))}%` }} />
+              </div>
+            </div>
           </section>
         </div>
+        <MonthLedger month={selectedMonth} transactions={initialData.transactions} />
         <div className="grid">
           <section className="panel">
             <Head n="Próximos recebimentos" s="Valores previstos para entrar" />
-            {initialData.transactions
-              .filter((item) => item.type === "income" && item.dueDate >= today)
-              .slice(0, 3)
-              .map((item) => (
-                <div className="item" key={item.id}>
-                  <i>
-                    {formatDueDate(item.dueDate).slice(0, 2)}
-                    <small>{monthLabel(item.dueDate)}</small>
-                  </i>
-                  <span>
-                    <b>{item.counterparty}</b>
-                    <small>{item.description}</small>
-                  </span>
-                  <strong>{money(item.amount)}</strong>
-                </div>
-              ))}
+            {incomeRows.filter((item) => item.dueDate >= today).slice(0, 5).length ? (
+              incomeRows
+                .filter((item) => item.dueDate >= today)
+                .slice(0, 5)
+                .map((item) => (
+                  <div className="item" key={item.id}>
+                    <i>
+                      {formatDueDate(item.dueDate).slice(0, 2)}
+                      <small>{monthLabel(item.dueDate)}</small>
+                    </i>
+                    <span>
+                      <b>{item.counterparty}</b>
+                      <small>
+                        {item.description} · {statusLabel(item.status)}
+                      </small>
+                    </span>
+                    <strong>{money(item.amount)}</strong>
+                  </div>
+                ))
+            ) : (
+              <p className="empty">Nenhum recebimento futuro cadastrado.</p>
+            )}
           </section>
           <section className="panel">
             <Head n="Projetos ativos" s="Progresso das principais entregas" />
-            {initialData.projects.slice(0, 3).map((project) => (
+            {initialData.projects.slice(0, 4).map((project) => (
               <div className="projectline" key={project.id}>
                 <span>
                   <b>{project.name}</b>
@@ -492,35 +664,104 @@ export function DashboardApp({
       <>
         <Title
           n="Financeiro"
-          s="Fluxo de caixa, resultado e a receita já contratada nos próximos meses."
+          s="Fluxo de caixa, recebíveis, despesas e a receita já contratada. Clique no mês para ver o detalhe."
           action={<CreateButton kind="transaction" onOpen={openCreate} />}
         />
         {metrics}
+        <div className="metrics">
+          <Metric n="Receita garantida" v={money(guaranteed)} s={`${projectedMonths.length} meses projetados`} I={FileText} />
+          <Metric n="A receber em aberto" v={money(openReceivables)} s={`${openReceivablesCount} títulos`} I={ReceiptText} t="blue" />
+          <Metric n="Despesas em aberto" v={money(unpaidExpenses)} s={`${recurringRows.filter((item) => item.status !== "paid").length + investmentRows.filter((item) => item.status !== "paid").length} itens`} I={Banknote} t="amber" />
+          <Metric n="Resultado do próximo mês" v={money(nextMonthRevenue - nextMonthExpenses)} s={`${money(nextMonthRevenue)} − ${money(nextMonthExpenses)}`} I={TrendingUp} t="violet" />
+        </div>
         <section className="panel biggraph">
-          <Head n="Fluxo de caixa" s="Realizado e projetado a partir dos contratos" />
-          <Graph chart={initialData.chart} />
+          <Head n="Fluxo de caixa" s="Realizado e projetado a partir dos contratos · clique no mês" />
+          <Graph chart={financeChart} selected={selectedMonth} onSelect={setSelectedMonth} />
         </section>
-        <section className="panel">
-          <Head
-            n="Receita garantida"
-            s={`${projectedMonths.length} meses com contrato · ${money(guaranteed)} no período`}
-          />
-          {projectedMonths.length ? (
-            projectedMonths.map((row) => (
-              <div className="bar" key={row.month}>
-                <span>
-                  {monthLabel(row.month)} {row.month.slice(0, 4)}
-                  <b>{money(row.amount)}</b>
-                </span>
-                <div>
-                  <i style={{ width: `${Math.min(100, percent(row.amount, Math.max(...projectedMonths.map((item) => item.amount), 1)))}%` }} />
+        <MonthLedger month={selectedMonth} transactions={initialData.transactions} />
+        <div className="grid">
+          <section className="panel">
+            <Head
+              n="Receita garantida"
+              s={`${projectedMonths.length} meses com contrato · ${money(guaranteed)} no período`}
+            />
+            {projectedMonths.length ? (
+              projectedMonths.slice(0, 8).map((row) => (
+                <button
+                  className={"bar clickable" + (monthKey(row.month) === selectedMonth ? " active" : "")}
+                  key={row.month}
+                  type="button"
+                  onClick={() => setSelectedMonth(monthKey(row.month))}
+                >
+                  <span>
+                    {monthLabel(row.month)} {row.month.slice(0, 4)}
+                    <b>{money(row.amount)}</b>
+                  </span>
+                  <div>
+                    <i
+                      style={{
+                        width: `${Math.min(
+                          100,
+                          percent(row.amount, Math.max(...projectedMonths.map((item) => item.amount), 1)),
+                        )}%`,
+                      }}
+                    />
+                  </div>
+                </button>
+              ))
+            ) : (
+              <p className="empty">Cadastre um contrato com fim definido para ver a projeção mês a mês.</p>
+            )}
+          </section>
+          <section className="panel">
+            <Head n="Maiores clientes" s="Soma de todas as receitas lançadas" />
+            {clientRevenue.length ? (
+              clientRevenue.map((item) => (
+                <div className="bar" key={item.name}>
+                  <span>
+                    {item.name}
+                    <b>{money(item.amount)}</b>
+                  </span>
+                  <div>
+                    <i
+                      style={{
+                        width: `${Math.min(
+                          100,
+                          percent(item.amount, Math.max(...clientRevenue.map((row) => row.amount), 1)),
+                        )}%`,
+                      }}
+                    />
+                  </div>
                 </div>
-              </div>
-            ))
-          ) : (
-            <p className="empty">Cadastre um contrato com fim definido para ver a projeção mês a mês.</p>
-          )}
-        </section>
+              ))
+            ) : (
+              <p className="empty">Nenhuma receita cadastrada.</p>
+            )}
+            {categoryBreakdown.length ? (
+              <>
+                <Head n={`Categorias em ${monthLabel(`${selectedMonth}-01`)}`} s="Composição da receita do mês selecionado" />
+                {categoryBreakdown.map((item) => (
+                  <div className="bar" key={item.name}>
+                    <span>
+                      {item.name}
+                      <b>{money(item.amount)}</b>
+                    </span>
+                    <div>
+                      <i
+                        style={{
+                          width: `${Math.min(
+                            100,
+                            percent(item.amount, Math.max(...categoryBreakdown.map((row) => row.amount), 1)),
+                          )}%`,
+                        }}
+                      />
+                    </div>
+                  </div>
+                ))}
+              </>
+            ) : null}
+          </section>
+        </div>
       </>
     ),
     Contas: (
