@@ -23,7 +23,9 @@ function buildFinanceChart(
   const txnExpenses = new Map<string, number>();
 
   for (const row of transactions) {
+    if (!row.dueDate) continue;
     const key = monthKey(row.dueDate);
+    if (!/^\d{4}-\d{2}$/.test(key)) continue;
     if (row.type === "income") {
       txnRevenue.set(key, (txnRevenue.get(key) ?? 0) + row.amount);
     } else {
@@ -31,14 +33,35 @@ function buildFinanceChart(
     }
   }
 
-  const keys = new Set([...metricMap.keys(), ...txnRevenue.keys(), ...txnExpenses.keys()]);
-  return [...keys]
-    .sort()
-    .map((key) => ({
-      month: `${key}-01`,
-      revenue: txnRevenue.has(key) ? (txnRevenue.get(key) ?? 0) : (metricMap.get(key)?.revenue ?? 0),
-      expenses: txnExpenses.has(key) ? (txnExpenses.get(key) ?? 0) : (metricMap.get(key)?.expenses ?? 0),
-    }));
+  const keys = [...new Set([...metricMap.keys(), ...txnRevenue.keys(), ...txnExpenses.keys()])]
+    .filter((key) => /^\d{4}-\d{2}$/.test(key))
+    .sort();
+
+  if (!keys.length) return [];
+
+  const filled: string[] = [];
+  let cursor = keys[0];
+  const last = keys[keys.length - 1];
+  while (cursor <= last) {
+    filled.push(cursor);
+    const [year, month] = cursor.split("-").map(Number);
+    const next = month === 12 ? `${year + 1}-01` : `${year}-${String(month + 1).padStart(2, "0")}`;
+    cursor = next;
+  }
+
+  return filled.map((key) => ({
+    month: `${key}-01`,
+    revenue: txnRevenue.has(key)
+      ? (txnRevenue.get(key) ?? 0)
+      : metricMap.has(key)
+        ? (metricMap.get(key)?.revenue ?? 0)
+        : 0,
+    expenses: txnExpenses.has(key)
+      ? (txnExpenses.get(key) ?? 0)
+      : metricMap.has(key)
+        ? (metricMap.get(key)?.expenses ?? 0)
+        : 0,
+  }));
 }
 
 export async function getDashboardData(): Promise<DashboardData> {

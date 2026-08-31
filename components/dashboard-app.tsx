@@ -193,9 +193,13 @@ function Graph({ chart }: { chart: DashboardData["chart"] }) {
           />
           <Tooltip
             contentStyle={{ background: "#132134", border: "1px solid #29394e", borderRadius: 10 }}
+            formatter={(value, name) => [
+              money(Number(value ?? 0)),
+              name === "r" ? "Receita" : "Despesas",
+            ]}
           />
-          <Area dataKey="r" stroke="#3ce4a3" fill="url(#g)" strokeWidth={2.5} />
-          <Area dataKey="d" stroke="#7088a6" fill="none" strokeWidth={2} />
+          <Area dataKey="r" stroke="#3ce4a3" fill="url(#g)" strokeWidth={2.5} name="r" />
+          <Area dataKey="d" stroke="#7088a6" fill="none" strokeWidth={2} name="d" />
         </AreaChart>
       </ResponsiveContainer>
     </div>

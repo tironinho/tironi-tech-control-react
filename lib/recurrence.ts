@@ -1,10 +1,11 @@
-export function addMonths(isoDate: string, count: number) {
+export function addMonths(isoDate: string, count: number, anchorDay?: number) {
   const [year, month, day] = isoDate.split("-").map(Number);
+  const preferred = anchorDay ?? day;
   const cursor = new Date(Date.UTC(year, month - 1 + count, 1));
   const lastDay = new Date(
     Date.UTC(cursor.getUTCFullYear(), cursor.getUTCMonth() + 1, 0),
   ).getUTCDate();
-  cursor.setUTCDate(Math.min(day, lastDay));
+  cursor.setUTCDate(Math.min(preferred, lastDay));
   return cursor.toISOString().slice(0, 10);
 }
 
@@ -43,12 +44,13 @@ export function monthlyDates(start: string, end: string) {
     throw new Error("O fim do contrato precisa ser depois do primeiro vencimento.");
   }
 
+  const anchorDay = Number(start.split("-")[2]);
   const dates: string[] = [];
   let current = start;
   for (let i = 0; i < 120; i += 1) {
     if (current > end) break;
     dates.push(current);
-    current = addMonths(current, 1);
+    current = addMonths(current, 1, anchorDay);
   }
 
   if (!dates.length) throw new Error("Informe um período de contrato válido.");
