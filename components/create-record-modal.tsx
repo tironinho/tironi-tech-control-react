@@ -4,7 +4,7 @@ import { useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
 import { ArrowDownRight, ArrowUpRight, Check, Plus, X } from "lucide-react";
 import type { DashboardData } from "@/lib/dashboard-types";
-import { addMonths, isRecurringIncome, monthlyDates } from "@/lib/recurrence";
+import { addMonths, isRecurringIncome, monthlyDates, normalizeDate } from "@/lib/recurrence";
 import { PROJECT_STAGES, PROPOSAL_STAGES } from "@/lib/pipeline";
 
 export type CreateKind = "transaction" | "expense" | "client" | "team" | "project" | "proposal";
@@ -195,8 +195,10 @@ export function CreateRecordModal({
   );
   const [description, setDescription] = useState(edit?.description ?? "");
   const [amount, setAmount] = useState(moneyInput(edit?.amount ?? edit?.monthlyCost));
-  const [dueDate, setDueDate] = useState(edit?.dueDate ?? today);
-  const [endsAt, setEndsAt] = useState(edit?.endsAt ?? addMonths(edit?.dueDate ?? today, 11));
+  const [dueDate, setDueDate] = useState(normalizeDate(edit?.dueDate) || today);
+  const [endsAt, setEndsAt] = useState(
+    normalizeDate(edit?.endsAt) || addMonths(normalizeDate(edit?.dueDate) || today, 11),
+  );
   const [category, setCategory] = useState(
     edit?.category ?? (kind === "expense" ? "Custo recorrente" : "Receita recorrente"),
   );
@@ -271,16 +273,28 @@ export function CreateRecordModal({
         if (recordType === "income" && isRecurringIncome(category, recordType) && !endsAt) {
           throw new Error("Informe a data de fim do contrato.");
         }
+        const normalizedDue = normalizeDate(dueDate);
+        const normalizedEnd = normalizeDate(endsAt);
+        if (!normalizedDue) throw new Error("Informe uma data de vencimento válida.");
+        if (
+          recordType === "income" &&
+          isRecurringIncome(category, recordType) &&
+          !normalizedEnd
+        ) {
+          throw new Error("Informe uma data de fim do contrato válida.");
+        }
         await send(method, url, {
           description: description.trim(),
           clientId: selectedClientId,
           category,
           type: recordType,
           amount: parsed,
-          dueDate,
+          dueDate: normalizedDue,
           status: payStatus,
           endsAt:
-            recordType === "income" && isRecurringIncome(category, recordType) ? endsAt : null,
+            recordType === "income" && isRecurringIncome(category, recordType)
+              ? normalizedEnd
+              : null,
         });
       } else if (kind === "client") {
         const parsedMrr = parseMoney(mrr) || 0;

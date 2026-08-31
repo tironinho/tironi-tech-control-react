@@ -1,7 +1,7 @@
 import "server-only";
 import type { DashboardData, PipelineData } from "@/lib/dashboard-types";
 import { monthsSince, toNumber } from "@/lib/money";
-import { isRecurringIncome, monthKey, monthlyDates } from "@/lib/recurrence";
+import { isRecurringIncome, monthKey, monthlyDates, normalizeDate } from "@/lib/recurrence";
 import { mapLegacyProjectStage } from "@/lib/pipeline";
 import { hashPassword } from "@/lib/password";
 import { getSupabase } from "@/lib/supabase";
@@ -93,8 +93,10 @@ export async function getDashboardData(): Promise<DashboardData> {
   const seriesStart = new Map<string, string>();
   for (const row of transactionRows.data ?? []) {
     if (!row.series_id) continue;
+    const due = normalizeDate(row.due_date);
+    if (!due) continue;
     const current = seriesStart.get(row.series_id);
-    if (!current || row.due_date < current) seriesStart.set(row.series_id, row.due_date);
+    if (!current || due < current) seriesStart.set(row.series_id, due);
   }
 
   const transactions = (transactionRows.data ?? []).map((row) => ({
@@ -105,11 +107,13 @@ export async function getDashboardData(): Promise<DashboardData> {
     category: row.category,
     type: row.type as "income" | "expense",
     amount: toNumber(row.amount),
-    dueDate: row.due_date,
+    dueDate: normalizeDate(row.due_date),
     status: row.status,
     seriesId: row.series_id ?? null,
-    endsAt: row.ends_at ?? null,
-    seriesStart: row.series_id ? (seriesStart.get(row.series_id) ?? row.due_date) : row.due_date,
+    endsAt: row.ends_at ? normalizeDate(row.ends_at) : null,
+    seriesStart: normalizeDate(
+      row.series_id ? (seriesStart.get(row.series_id) ?? row.due_date) : row.due_date,
+    ),
   }));
 
   return {

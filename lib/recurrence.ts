@@ -8,6 +8,28 @@ export function addMonths(isoDate: string, count: number) {
   return cursor.toISOString().slice(0, 10);
 }
 
+export function normalizeDate(value: string | null | undefined) {
+  if (!value) return "";
+  const match = String(value).match(/^(\d{4})-(\d{2})-(\d{2})/);
+  if (!match) return "";
+  const year = Number(match[1]);
+  const month = Number(match[2]);
+  const day = Number(match[3]);
+  const probe = new Date(Date.UTC(year, month - 1, day));
+  if (
+    probe.getUTCFullYear() !== year ||
+    probe.getUTCMonth() !== month - 1 ||
+    probe.getUTCDate() !== day
+  ) {
+    return "";
+  }
+  return `${match[1]}-${match[2]}-${match[3]}`;
+}
+
+export function isValidDate(value: string) {
+  return Boolean(normalizeDate(value));
+}
+
 export function monthKey(isoDate: string) {
   return isoDate.slice(0, 7);
 }

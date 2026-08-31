@@ -6,6 +6,15 @@ import {
   parseRecordId,
   updateTransaction,
 } from "@/lib/dashboard";
+import { isValidDate, normalizeDate } from "@/lib/recurrence";
+
+const dateSchema = z
+  .string()
+  .trim()
+  .transform((value) => normalizeDate(value))
+  .refine((value) => isValidDate(value), {
+    message: "Informe uma data válida no formato AAAA-MM-DD.",
+  });
 
 const payloadSchema = z
   .object({
@@ -20,9 +29,12 @@ const payloadSchema = z
     ]),
     type: z.enum(["income", "expense"]),
     amount: z.number().positive(),
-    dueDate: z.string().regex(/^\d{4}-\d{2}-\d{2}$/),
+    dueDate: dateSchema,
     status: z.enum(["receivable", "expected", "payable", "paid"]).optional(),
-    endsAt: z.string().regex(/^\d{4}-\d{2}-\d{2}$/).nullable().optional(),
+    endsAt: z
+      .union([dateSchema, z.literal(""), z.null()])
+      .optional()
+      .transform((value) => (value ? value : null)),
   })
   .refine((payload) => payload.type !== "income" || payload.clientId != null, {
     message: "Selecione o cliente da receita.",

@@ -2,6 +2,7 @@ import "server-only";
 import { createHmac, timingSafeEqual } from "node:crypto";
 import { cookies } from "next/headers";
 import { redirect } from "next/navigation";
+import { ZodError } from "zod";
 import { verifyPassword } from "@/lib/password";
 import { getSupabase } from "@/lib/supabase";
 
@@ -176,6 +177,25 @@ export function assertBoardAccess(session: SessionUser, board: "comercial" | "de
 
 export function apiFail(error: unknown) {
   const status = typeof error === "object" && error && "status" in error ? Number(error.status) : 400;
+
+  if (error instanceof ZodError) {
+    const first = error.issues[0];
+    const field = first?.path?.join(".") || "dados";
+    const labels: Record<string, string> = {
+      dueDate: "primeiro vencimento",
+      endsAt: "fim do contrato",
+      clientId: "cliente",
+      amount: "valor",
+      description: "descrição",
+      startedAt: "data de início",
+    };
+    const label = labels[field] ?? field;
+    const detail = first?.message === "Invalid" || first?.message === "Required"
+      ? `Verifique o campo ${label}.`
+      : first?.message || `Verifique o campo ${label}.`;
+    return Response.json({ error: detail }, { status: 400 });
+  }
+
   const message = error instanceof Error ? error.message : "Invalid payload";
   return Response.json({ error: message }, { status: status || 400 });
 }
