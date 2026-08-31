@@ -18,6 +18,7 @@ export type DashboardData = {
     mrr: number;
     ltv: number;
     months: number;
+    startedAt: string;
   }[];
   team: {
     id: number;
@@ -29,6 +30,7 @@ export type DashboardData = {
   projects: {
     id: number;
     name: string;
+    clientId: number | null;
     clientName: string;
     progress: number;
     dueDate: string;

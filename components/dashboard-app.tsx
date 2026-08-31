@@ -1,6 +1,7 @@
 "use client";
 
 import { useMemo, useState } from "react";
+import { useRouter } from "next/navigation";
 import {
   Area,
   AreaChart,
@@ -13,6 +14,7 @@ import {
 import {
   ArrowDownRight,
   ArrowUpRight,
+  Banknote,
   BarChart3,
   Bell,
   Building2,
@@ -24,7 +26,6 @@ import {
   FolderKanban,
   LayoutDashboard,
   Menu,
-  MoreHorizontal,
   ReceiptText,
   Search,
   Settings,
@@ -37,12 +38,14 @@ import {
 import type { DashboardData } from "@/lib/dashboard-types";
 import { latestMonth, previousMonth } from "@/lib/dashboard-types";
 import { formatDueDate, money, monthLabel } from "@/lib/money";
-import { CreateButton, CreateRecordModal, type CreateKind } from "@/components/create-record-modal";
+import { CreateButton, CreateRecordModal, type CreateKind, type ModalEdit } from "@/components/create-record-modal";
+import { ConfirmDelete, RecordTools } from "@/components/record-tools";
 
 type Screen =
   | "Visão geral"
   | "Financeiro"
   | "Contas"
+  | "Despesas"
   | "Propostas"
   | "Projetos"
   | "Equipe"
@@ -53,6 +56,7 @@ const nav = [
   ["Visão geral", LayoutDashboard],
   ["Financeiro", BarChart3],
   ["Contas", ReceiptText],
+  ["Despesas", Banknote],
   ["Propostas", FileText],
   ["Projetos", FolderKanban],
   ["Equipe", Users],
@@ -80,6 +84,19 @@ function statusTone(status: string) {
   if (status === "expected") return "blue";
   if (status === "payable" || status === "at_risk") return "amber";
   return "";
+}
+
+function transactionEdit(item: DashboardData["transactions"][number]): ModalEdit {
+  return {
+    id: item.id,
+    description: item.description,
+    amount: item.amount,
+    dueDate: item.dueDate,
+    category: item.category,
+    type: item.type,
+    clientId: item.clientId,
+    status: item.status,
+  };
 }
 
 function Metric({
@@ -183,9 +200,48 @@ function Graph({ chart }: { chart: DashboardData["chart"] }) {
 }
 
 export function DashboardApp({ initialData }: { initialData: DashboardData }) {
+  const router = useRouter();
   const [screen, setScreen] = useState<Screen>("Visão geral");
   const [menu, setMenu] = useState(false);
-  const [modal, setModal] = useState<CreateKind | null>(null);
+  const [modal, setModal] = useState<{ kind: CreateKind; edit?: ModalEdit } | null>(null);
+  const [pendingDelete, setPendingDelete] = useState<{
+    kind: CreateKind;
+    id: number;
+    label: string;
+  } | null>(null);
+  const [deleting, setDeleting] = useState(false);
+  const [deleteError, setDeleteError] = useState("");
+
+  function openCreate(kind: CreateKind) {
+    setModal({ kind });
+  }
+
+  async function confirmDelete() {
+    if (!pendingDelete) return;
+    setDeleteError("");
+    setDeleting(true);
+    try {
+      const path =
+        pendingDelete.kind === "expense" || pendingDelete.kind === "transaction"
+          ? "/api/transactions"
+          : pendingDelete.kind === "client"
+            ? "/api/clients"
+            : pendingDelete.kind === "team"
+              ? "/api/team"
+              : pendingDelete.kind === "project"
+                ? "/api/projects"
+                : "/api/proposals";
+      const response = await fetch(`${path}?id=${pendingDelete.id}`, { method: "DELETE" });
+      const payload = (await response.json()) as { error?: string };
+      if (!response.ok) throw new Error(payload.error ?? "Falha ao excluir");
+      setPendingDelete(null);
+      router.refresh();
+    } catch (caught) {
+      setDeleteError(caught instanceof Error ? caught.message : "Falha ao excluir");
+    } finally {
+      setDeleting(false);
+    }
+  }
 
   const current = latestMonth(initialData.chart);
   const previous = previousMonth(initialData.chart);
@@ -204,6 +260,15 @@ export function DashboardApp({ initialData }: { initialData: DashboardData }) {
   );
   const upcomingIncome = initialData.transactions
     .filter((item) => item.type === "income")
+    .reduce((sum, item) => sum + item.amount, 0);
+  const incomeRows = initialData.transactions.filter((item) => item.type === "income");
+  const expenseRows = initialData.transactions.filter((item) => item.type === "expense");
+  const recurringRows = expenseRows.filter((item) => item.category !== "Investimento");
+  const investmentRows = expenseRows.filter((item) => item.category === "Investimento");
+  const recurringTotal = recurringRows.reduce((sum, item) => sum + item.amount, 0);
+  const investmentTotal = investmentRows.reduce((sum, item) => sum + item.amount, 0);
+  const unpaidExpenses = expenseRows
+    .filter((item) => item.status !== "paid")
     .reduce((sum, item) => sum + item.amount, 0);
   const avgLtv = initialData.clients.length
     ? initialData.clients.reduce((sum, client) => sum + client.ltv, 0) / initialData.clients.length
@@ -256,6 +321,7 @@ export function DashboardApp({ initialData }: { initialData: DashboardData }) {
     "Visão geral": "transaction",
     Financeiro: "transaction",
     Contas: "transaction",
+    Despesas: "expense",
     Propostas: "proposal",
     Projetos: "project",
     Equipe: "team",
@@ -270,7 +336,7 @@ export function DashboardApp({ initialData }: { initialData: DashboardData }) {
         <Title
           n="Boa noite, Tironi."
           s="Aqui está o panorama da empresa em agosto."
-          action={<CreateButton kind="transaction" onOpen={setModal} />}
+          action={<CreateButton kind="transaction" onOpen={openCreate} />}
         />
         {metrics}
         <div className="grid wide">
@@ -341,7 +407,7 @@ export function DashboardApp({ initialData }: { initialData: DashboardData }) {
         <Title
           n="Financeiro"
           s="Fluxo de caixa, resultado e projeções."
-          action={<CreateButton kind="transaction" onOpen={setModal} />}
+          action={<CreateButton kind="transaction" onOpen={openCreate} />}
         />
         {metrics}
         <section className="panel biggraph">
@@ -354,39 +420,136 @@ export function DashboardApp({ initialData }: { initialData: DashboardData }) {
       <>
         <Title
           n="Contas e lançamentos"
-          s="Controle do que entra, sai e vence ao longo do tempo."
-          action={<CreateButton kind="transaction" onOpen={setModal} />}
+          s="Receitas, vencimentos e o cliente de cada entrada."
+          action={<CreateButton kind="transaction" onOpen={openCreate} />}
         />
         <section className="panel">
-          <Head n="Agenda financeira" s="Setembro de 2026" />
+          <Head n="Agenda de receitas" s={`${incomeRows.length} lançamentos`} />
           <div className="table">
-            <div className="row th">
+            <div className="row accounts th">
               <span>Cliente</span>
               <span>Descrição</span>
               <span>Vencimento</span>
               <span>Categoria</span>
               <span>Status</span>
               <span>Valor</span>
+              <span />
             </div>
-            {initialData.transactions.map((item) => (
-              <div className="row" key={item.id}>
-                <span>
-                  <b>{item.clientId ? item.counterparty : "—"}</b>
-                </span>
-                <span>{item.description}</span>
-                <span>{formatDueDate(item.dueDate)}</span>
-                <span>{item.category}</span>
-                <span>
-                  <Status t={statusTone(item.status)}>{statusLabel(item.status)}</Status>
-                </span>
-                <b className={item.type === "income" ? "green" : "red"}>
-                  {item.type === "income" ? "+ " : "− "}
-                  {money(item.amount)}
-                </b>
-              </div>
-            ))}
+            {incomeRows.length ? (
+              incomeRows.map((item) => (
+                <div className="row accounts" key={item.id}>
+                  <span>
+                    <b>{item.clientId ? item.counterparty : "—"}</b>
+                  </span>
+                  <span>{item.description}</span>
+                  <span>{formatDueDate(item.dueDate)}</span>
+                  <span>{item.category}</span>
+                  <span>
+                    <Status t={statusTone(item.status)}>{statusLabel(item.status)}</Status>
+                  </span>
+                  <b className="green">+ {money(item.amount)}</b>
+                  <RecordTools
+                    onEdit={() => setModal({ kind: "transaction", edit: transactionEdit(item) })}
+                    onDelete={() => {
+                      setDeleteError("");
+                      setPendingDelete({ kind: "transaction", id: item.id, label: item.description });
+                    }}
+                  />
+                </div>
+              ))
+            ) : (
+              <p className="empty">Nenhuma receita lançada ainda.</p>
+            )}
           </div>
         </section>
+      </>
+    ),
+    Despesas: (
+      <>
+        <Title
+          n="Despesas e investimentos"
+          s="Custos recorrentes como luz e água, e compras de equipamento."
+          action={<CreateButton kind="expense" onOpen={openCreate} />}
+        />
+        <div className="metrics three">
+          <Metric n="Custos recorrentes" v={money(recurringTotal)} s={`${recurringRows.length} lançamentos`} I={ArrowDownRight} t="amber" />
+          <Metric n="Investimentos" v={money(investmentTotal)} s={`${investmentRows.length} itens`} I={Banknote} t="blue" />
+          <Metric n="A pagar" v={money(unpaidExpenses)} s="Ainda em aberto" I={WalletCards} t="violet" />
+        </div>
+        <div className="grid">
+          <section className="panel">
+            <Head n="Custos recorrentes" s="Luz, água, internet e outros mensais" />
+            <div className="table">
+              <div className="row expenses th">
+                <span>Descrição</span>
+                <span>Vencimento</span>
+                <span>Status</span>
+                <span>Valor</span>
+                <span />
+              </div>
+              {recurringRows.length ? (
+                recurringRows.map((item) => (
+                  <div className="row expenses" key={item.id}>
+                    <span>
+                      <b>{item.description}</b>
+                      <small>{item.category}</small>
+                    </span>
+                    <span>{formatDueDate(item.dueDate)}</span>
+                    <span>
+                      <Status t={statusTone(item.status)}>{statusLabel(item.status)}</Status>
+                    </span>
+                    <b className="red">− {money(item.amount)}</b>
+                    <RecordTools
+                      onEdit={() => setModal({ kind: "expense", edit: transactionEdit(item) })}
+                      onDelete={() => {
+                        setDeleteError("");
+                        setPendingDelete({ kind: "expense", id: item.id, label: item.description });
+                      }}
+                    />
+                  </div>
+                ))
+              ) : (
+                <p className="empty">Nenhum custo recorrente cadastrado.</p>
+              )}
+            </div>
+          </section>
+          <section className="panel">
+            <Head n="Investimentos" s="Monitor, cadeiras e outros ativos" />
+            <div className="table">
+              <div className="row expenses th">
+                <span>Descrição</span>
+                <span>Vencimento</span>
+                <span>Status</span>
+                <span>Valor</span>
+                <span />
+              </div>
+              {investmentRows.length ? (
+                investmentRows.map((item) => (
+                  <div className="row expenses" key={item.id}>
+                    <span>
+                      <b>{item.description}</b>
+                      <small>Investimento</small>
+                    </span>
+                    <span>{formatDueDate(item.dueDate)}</span>
+                    <span>
+                      <Status t={statusTone(item.status)}>{statusLabel(item.status)}</Status>
+                    </span>
+                    <b className="red">− {money(item.amount)}</b>
+                    <RecordTools
+                      onEdit={() => setModal({ kind: "expense", edit: transactionEdit(item) })}
+                      onDelete={() => {
+                        setDeleteError("");
+                        setPendingDelete({ kind: "expense", id: item.id, label: item.description });
+                      }}
+                    />
+                  </div>
+                ))
+              ) : (
+                <p className="empty">Nenhum investimento cadastrado.</p>
+              )}
+            </div>
+          </section>
+        </div>
       </>
     ),
     Propostas: (
@@ -394,7 +557,7 @@ export function DashboardApp({ initialData }: { initialData: DashboardData }) {
         <Title
           n="Propostas comerciais"
           s="Pipeline completo, probabilidades e valores negociados."
-          action={<CreateButton kind="proposal" onOpen={setModal} />}
+          action={<CreateButton kind="proposal" onOpen={openCreate} />}
         />
         <div className="metrics three">
           <Metric n="Pipeline total" v={money(pipeline)} s={`${initialData.proposals.length} oportunidades`} I={FileText} />
@@ -413,7 +576,25 @@ export function DashboardApp({ initialData }: { initialData: DashboardData }) {
                 .map((item) => (
                   <article key={item.id}>
                     <small>{item.clientName}</small>
-                    <MoreHorizontal />
+                    <RecordTools
+                      onEdit={() =>
+                        setModal({
+                          kind: "proposal",
+                          edit: {
+                            id: item.id,
+                            clientName: item.clientName,
+                            title: item.title,
+                            amount: item.amount,
+                            probability: item.probability,
+                            stage: item.stage,
+                          },
+                        })
+                      }
+                      onDelete={() => {
+                        setDeleteError("");
+                        setPendingDelete({ kind: "proposal", id: item.id, label: item.title });
+                      }}
+                    />
                     <h3>{item.title}</h3>
                     <strong>{money(item.amount)}</strong>
                     <footer>
@@ -434,7 +615,7 @@ export function DashboardApp({ initialData }: { initialData: DashboardData }) {
         <Title
           n="Projetos em andamento"
           s="Entregas, prazos, clientes e saúde operacional."
-          action={<CreateButton kind="project" onOpen={setModal} />}
+          action={<CreateButton kind="project" onOpen={openCreate} />}
         />
         <div className="projectgrid">
           {initialData.projects.map((project) => (
@@ -443,7 +624,28 @@ export function DashboardApp({ initialData }: { initialData: DashboardData }) {
                 <i>
                   <FolderKanban />
                 </i>
-                <Status t={statusTone(project.status)}>{statusLabel(project.status)}</Status>
+                <div className="card-tools">
+                  <Status t={statusTone(project.status)}>{statusLabel(project.status)}</Status>
+                  <RecordTools
+                    onEdit={() =>
+                      setModal({
+                        kind: "project",
+                        edit: {
+                          id: project.id,
+                          name: project.name,
+                          clientName: project.clientName,
+                          progress: project.progress,
+                          dueDate: project.dueDate,
+                          projectStatus: project.status === "at_risk" ? "at_risk" : "on_track",
+                        },
+                      })
+                    }
+                    onDelete={() => {
+                      setDeleteError("");
+                      setPendingDelete({ kind: "project", id: project.id, label: project.name });
+                    }}
+                  />
+                </div>
               </header>
               <small>{project.clientName}</small>
               <h3>{project.name}</h3>
@@ -467,7 +669,7 @@ export function DashboardApp({ initialData }: { initialData: DashboardData }) {
         <Title
           n="Equipe e salários"
           s="Custos, funções e situação dos colaboradores."
-          action={<CreateButton kind="team" onOpen={setModal} />}
+          action={<CreateButton kind="team" onOpen={openCreate} />}
         />
         <div className="metrics three">
           <Metric n="Custo mensal" v={money(teamCost)} s={`${percent(teamCost, revenue)}% da receita`} I={Users} />
@@ -483,7 +685,7 @@ export function DashboardApp({ initialData }: { initialData: DashboardData }) {
         <section className="panel">
           <Head n="Colaboradores" s="Folha e informações principais" />
           <div className="table">
-            <div className="row th">
+            <div className="row team th">
               <span>Colaborador</span>
               <span>Função</span>
               <span>Status</span>
@@ -491,7 +693,7 @@ export function DashboardApp({ initialData }: { initialData: DashboardData }) {
               <span />
             </div>
             {initialData.team.map((member) => (
-              <div className="row" key={member.id}>
+              <div className="row team" key={member.id}>
                 <span className="person">
                   <i>{member.initials}</i>
                   <b>{member.name}</b>
@@ -501,7 +703,23 @@ export function DashboardApp({ initialData }: { initialData: DashboardData }) {
                   <Status>Ativo</Status>
                 </span>
                 <b>{money(member.monthlyCost)}</b>
-                <MoreHorizontal />
+                <RecordTools
+                  onEdit={() =>
+                    setModal({
+                      kind: "team",
+                      edit: {
+                        id: member.id,
+                        name: member.name,
+                        role: member.role,
+                        monthlyCost: member.monthlyCost,
+                      },
+                    })
+                  }
+                  onDelete={() => {
+                    setDeleteError("");
+                    setPendingDelete({ kind: "team", id: member.id, label: member.name });
+                  }}
+                />
               </div>
             ))}
           </div>
@@ -513,7 +731,7 @@ export function DashboardApp({ initialData }: { initialData: DashboardData }) {
         <Title
           n="Clientes e LTV"
           s="Valor gerado, recorrência e tempo de relacionamento."
-          action={<CreateButton kind="client" onOpen={setModal} />}
+          action={<CreateButton kind="client" onOpen={openCreate} />}
         />
         <div className="metrics three">
           <Metric n="LTV médio" v={money(avgLtv)} s="Base atual" I={CircleDollarSign} />
@@ -524,7 +742,24 @@ export function DashboardApp({ initialData }: { initialData: DashboardData }) {
           {initialData.clients.map((client) => (
             <article key={client.id}>
               <i>{client.initials}</i>
-              <MoreHorizontal />
+              <RecordTools
+                onEdit={() =>
+                  setModal({
+                    kind: "client",
+                    edit: {
+                      id: client.id,
+                      name: client.name,
+                      mrr: client.mrr,
+                      ltv: client.ltv,
+                      startedAt: client.startedAt,
+                    },
+                  })
+                }
+                onDelete={() => {
+                  setDeleteError("");
+                  setPendingDelete({ kind: "client", id: client.id, label: client.name });
+                }}
+              />
               <h3>{client.name}</h3>
               <p>
                 Cliente há {client.months} {client.months === 1 ? "mês" : "meses"}
@@ -576,7 +811,8 @@ export function DashboardApp({ initialData }: { initialData: DashboardData }) {
             >
               <Icon />
               {name}
-              {name === "Contas" && <b>{initialData.transactions.length}</b>}
+              {name === "Contas" && <b>{incomeRows.length}</b>}
+              {name === "Despesas" && <b>{expenseRows.length}</b>}
             </button>
           ))}
         </nav>
@@ -611,15 +847,26 @@ export function DashboardApp({ initialData }: { initialData: DashboardData }) {
           <button className="bell">
             <Bell />
           </button>
-          {currentAction ? <CreateButton kind={currentAction} onOpen={setModal} /> : null}
+          {currentAction ? <CreateButton kind={currentAction} onOpen={openCreate} /> : null}
         </header>
         <div className="content">{view[screen]}</div>
       </main>
       {modal ? (
         <CreateRecordModal
-          kind={modal}
+          kind={modal.kind}
           clients={initialData.clients}
+          edit={modal.edit}
           onClose={() => setModal(null)}
+        />
+      ) : null}
+      {pendingDelete ? (
+        <ConfirmDelete
+          title="Excluir registro"
+          message={`Excluir “${pendingDelete.label}”? Essa ação não pode ser desfeita.`}
+          error={deleteError}
+          busy={deleting}
+          onCancel={() => setPendingDelete(null)}
+          onConfirm={confirmDelete}
         />
       ) : null}
     </div>

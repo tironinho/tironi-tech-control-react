@@ -5,7 +5,30 @@ import { useRouter } from "next/navigation";
 import { ArrowDownRight, ArrowUpRight, Check, Plus, X } from "lucide-react";
 import type { DashboardData } from "@/lib/dashboard-types";
 
-export type CreateKind = "transaction" | "client" | "team" | "project" | "proposal";
+export type CreateKind = "transaction" | "expense" | "client" | "team" | "project" | "proposal";
+
+export type ModalEdit = {
+  id: number;
+  description?: string;
+  amount?: number;
+  dueDate?: string;
+  category?: string;
+  type?: "income" | "expense";
+  clientId?: number | null;
+  status?: string;
+  name?: string;
+  role?: string;
+  mrr?: number;
+  ltv?: number;
+  startedAt?: string;
+  clientName?: string;
+  progress?: number;
+  projectStatus?: "on_track" | "at_risk";
+  stage?: string;
+  title?: string;
+  probability?: number;
+  monthlyCost?: number;
+};
 
 const labels: Record<CreateKind, { title: string; subtitle: string; save: string; header: string }> = {
   transaction: {
@@ -13,6 +36,12 @@ const labels: Record<CreateKind, { title: string; subtitle: string; save: string
     subtitle: "Informe o valor e de qual cliente vem a receita.",
     save: "Salvar lançamento",
     header: "Novo lançamento",
+  },
+  expense: {
+    title: "Nova despesa",
+    subtitle: "Cadastre um custo recorrente ou um investimento.",
+    save: "Salvar despesa",
+    header: "Nova despesa",
   },
   client: {
     title: "Novo cliente",
@@ -40,6 +69,48 @@ const labels: Record<CreateKind, { title: string; subtitle: string; save: string
   },
 };
 
+const editTitles: Record<CreateKind, { title: string; subtitle: string; save: string }> = {
+  transaction: {
+    title: "Editar lançamento",
+    subtitle: "Atualize a receita e o cliente vinculado.",
+    save: "Salvar alterações",
+  },
+  expense: {
+    title: "Editar despesa",
+    subtitle: "Atualize o custo recorrente ou o investimento.",
+    save: "Salvar alterações",
+  },
+  client: {
+    title: "Editar cliente",
+    subtitle: "Atualize os dados do contrato.",
+    save: "Salvar alterações",
+  },
+  team: {
+    title: "Editar colaborador",
+    subtitle: "Atualize função e custo mensal.",
+    save: "Salvar alterações",
+  },
+  project: {
+    title: "Editar projeto",
+    subtitle: "Atualize prazo, progresso e cliente.",
+    save: "Salvar alterações",
+  },
+  proposal: {
+    title: "Editar proposta",
+    subtitle: "Atualize valor, estágio e probabilidade.",
+    save: "Salvar alterações",
+  },
+};
+
+const endpoints: Record<CreateKind, string> = {
+  transaction: "/api/transactions",
+  expense: "/api/transactions",
+  client: "/api/clients",
+  team: "/api/team",
+  project: "/api/projects",
+  proposal: "/api/proposals",
+};
+
 function initialsFrom(name: string) {
   const parts = name.trim().split(/\s+/).filter(Boolean);
   return parts
@@ -51,6 +122,11 @@ function initialsFrom(name: string) {
 
 function parseMoney(value: string) {
   return Number(value.replace(/\./g, "").replace(",", "."));
+}
+
+function moneyInput(value?: number) {
+  if (value == null || Number.isNaN(value)) return "";
+  return value.toLocaleString("pt-BR", { minimumFractionDigits: 2, maximumFractionDigits: 2 });
 }
 
 export function CreateButton({
@@ -71,42 +147,51 @@ export function CreateButton({
 export function CreateRecordModal({
   kind,
   clients,
+  edit,
   onClose,
 }: {
   kind: CreateKind;
   clients: DashboardData["clients"];
+  edit?: ModalEdit;
   onClose: () => void;
 }) {
   const router = useRouter();
-  const copy = labels[kind];
+  const copy = edit ? { ...labels[kind], ...editTitles[kind] } : labels[kind];
   const [saving, setSaving] = useState(false);
   const [saved, setSaved] = useState(false);
   const [error, setError] = useState("");
   const today = new Date().toISOString().slice(0, 10);
 
-  const [type, setType] = useState<"income" | "expense">("income");
-  const [description, setDescription] = useState("");
-  const [amount, setAmount] = useState("");
-  const [dueDate, setDueDate] = useState(today);
-  const [category, setCategory] = useState("Receita recorrente");
-  const [transactionClientId, setTransactionClientId] = useState(
-    String(clients[0]?.id ?? ""),
+  const [type, setType] = useState<"income" | "expense">(
+    kind === "expense" ? "expense" : (edit?.type ?? "income"),
   );
-  const [name, setName] = useState("");
-  const [role, setRole] = useState("");
-  const [mrr, setMrr] = useState("");
-  const [ltv, setLtv] = useState("");
-  const [startedAt, setStartedAt] = useState(today);
-  const [clientKey, setClientKey] = useState(clients[0]?.name ?? "Interno");
-  const [progress, setProgress] = useState("0");
-  const [status, setStatus] = useState<"on_track" | "at_risk">("on_track");
-  const [stage, setStage] = useState("Diagnóstico");
-  const [title, setTitle] = useState("");
-  const [probability, setProbability] = useState("30");
+  const [description, setDescription] = useState(edit?.description ?? "");
+  const [amount, setAmount] = useState(moneyInput(edit?.amount ?? edit?.monthlyCost));
+  const [dueDate, setDueDate] = useState(edit?.dueDate ?? today);
+  const [category, setCategory] = useState(
+    edit?.category ?? (kind === "expense" ? "Custo recorrente" : "Receita recorrente"),
+  );
+  const [transactionClientId, setTransactionClientId] = useState(
+    String(edit?.clientId ?? (kind === "expense" ? "" : clients[0]?.id ?? "")),
+  );
+  const [payStatus, setPayStatus] = useState(
+    edit?.status ?? (kind === "expense" ? "payable" : "receivable"),
+  );
+  const [name, setName] = useState(edit?.name ?? "");
+  const [role, setRole] = useState(edit?.role ?? "");
+  const [mrr, setMrr] = useState(moneyInput(edit?.mrr));
+  const [ltv, setLtv] = useState(moneyInput(edit?.ltv));
+  const [startedAt, setStartedAt] = useState(edit?.startedAt ?? today);
+  const [clientKey, setClientKey] = useState(edit?.clientName ?? clients[0]?.name ?? "Interno");
+  const [progress, setProgress] = useState(String(edit?.progress ?? 0));
+  const [status, setStatus] = useState<"on_track" | "at_risk">(edit?.projectStatus ?? "on_track");
+  const [stage, setStage] = useState(edit?.stage ?? "Diagnóstico");
+  const [title, setTitle] = useState(edit?.title ?? "");
+  const [probability, setProbability] = useState(String(edit?.probability ?? 30));
 
-  async function post(url: string, body: unknown) {
+  async function send(method: "POST" | "PATCH", url: string, body: unknown) {
     const response = await fetch(url, {
-      method: "POST",
+      method,
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify(body),
     });
@@ -118,26 +203,31 @@ export function CreateRecordModal({
     setError("");
     setSaving(true);
     try {
-      if (kind === "transaction") {
+      const url = edit ? `${endpoints[kind]}?id=${edit.id}` : endpoints[kind];
+      const method = edit ? "PATCH" : "POST";
+
+      if (kind === "transaction" || kind === "expense") {
         const parsed = parseMoney(amount);
         const selectedClientId = Number(transactionClientId) || null;
+        const recordType = kind === "expense" ? "expense" : type;
         if (!description.trim() || !parsed) throw new Error("Preencha descrição e valor.");
-        if (type === "income" && !selectedClientId) {
+        if (recordType === "income" && !selectedClientId) {
           throw new Error("Selecione o cliente da receita.");
         }
-        await post("/api/transactions", {
+        await send(method, url, {
           description: description.trim(),
           clientId: selectedClientId,
           category,
-          type,
+          type: recordType,
           amount: parsed,
           dueDate,
+          status: payStatus,
         });
       } else if (kind === "client") {
         const parsedMrr = parseMoney(mrr) || 0;
         const parsedLtv = parseMoney(ltv) || 0;
         if (!name.trim()) throw new Error("Informe o nome do cliente.");
-        await post("/api/clients", {
+        await send(method, url, {
           name: name.trim(),
           initials: initialsFrom(name) || "CL",
           mrr: parsedMrr,
@@ -147,7 +237,7 @@ export function CreateRecordModal({
       } else if (kind === "team") {
         const parsedCost = parseMoney(amount) || 0;
         if (!name.trim() || !role.trim()) throw new Error("Informe nome e função.");
-        await post("/api/team", {
+        await send(method, url, {
           name: name.trim(),
           initials: initialsFrom(name) || "EQ",
           role: role.trim(),
@@ -156,7 +246,7 @@ export function CreateRecordModal({
       } else if (kind === "project") {
         if (!name.trim()) throw new Error("Informe o nome do projeto.");
         const selected = clients.find((client) => client.name === clientKey);
-        await post("/api/projects", {
+        await send(method, url, {
           name: name.trim(),
           clientId: selected?.id ?? null,
           clientName: clientKey,
@@ -169,7 +259,7 @@ export function CreateRecordModal({
         if (!title.trim() || !clientKey.trim() || !parsed) {
           throw new Error("Informe cliente, título e valor.");
         }
-        await post("/api/proposals", {
+        await send(method, url, {
           stage,
           clientName: clientKey.trim(),
           title: title.trim(),
@@ -209,7 +299,10 @@ export function CreateRecordModal({
                 onClick={() => {
                   setType("income");
                   if (!transactionClientId && clients[0]) setTransactionClientId(String(clients[0].id));
-                  if (category === "Equipe") setCategory("Receita recorrente");
+                  if (category === "Equipe" || category === "Custo recorrente" || category === "Investimento") {
+                    setCategory("Receita recorrente");
+                  }
+                  setPayStatus("receivable");
                 }}
               >
                 <ArrowUpRight />
@@ -220,7 +313,8 @@ export function CreateRecordModal({
                 type="button"
                 onClick={() => {
                   setType("expense");
-                  if (category === "Receita recorrente") setCategory("Equipe");
+                  if (category === "Receita recorrente") setCategory("Custo recorrente");
+                  setPayStatus("payable");
                 }}
               >
                 <ArrowDownRight />
@@ -262,20 +356,91 @@ export function CreateRecordModal({
                 <input type="date" value={dueDate} onChange={(event) => setDueDate(event.target.value)} />
               </label>
             </div>
+            <div className="formgrid">
+              <label>
+                Categoria
+                <select value={category} onChange={(event) => setCategory(event.target.value)}>
+                  {type === "income" ? (
+                    <>
+                      <option>Receita recorrente</option>
+                      <option>Projeto</option>
+                    </>
+                  ) : (
+                    <>
+                      <option>Custo recorrente</option>
+                      <option>Investimento</option>
+                      <option>Equipe</option>
+                      <option>Projeto</option>
+                    </>
+                  )}
+                </select>
+              </label>
+              <label>
+                Status
+                <select value={payStatus} onChange={(event) => setPayStatus(event.target.value)}>
+                  {type === "income" ? (
+                    <>
+                      <option value="receivable">A receber</option>
+                      <option value="expected">Previsto</option>
+                      <option value="paid">Recebido</option>
+                    </>
+                  ) : (
+                    <>
+                      <option value="payable">A pagar</option>
+                      <option value="paid">Pago</option>
+                    </>
+                  )}
+                </select>
+              </label>
+            </div>
+          </>
+        )}
+
+        {kind === "expense" && (
+          <>
+            <div className="toggle">
+              <button
+                className={category !== "Investimento" ? "active" : ""}
+                type="button"
+                onClick={() => setCategory("Custo recorrente")}
+              >
+                <ArrowDownRight />
+                Recorrente
+              </button>
+              <button
+                className={category === "Investimento" ? "active" : ""}
+                type="button"
+                onClick={() => setCategory("Investimento")}
+              >
+                <ArrowUpRight />
+                Investimento
+              </button>
+            </div>
             <label>
-              Categoria
-              <select value={category} onChange={(event) => setCategory(event.target.value)}>
-                {type === "income" ? (
-                  <>
-                    <option>Receita recorrente</option>
-                    <option>Projeto</option>
-                  </>
-                ) : (
-                  <>
-                    <option>Equipe</option>
-                    <option>Projeto</option>
-                  </>
-                )}
+              Descrição
+              <input
+                placeholder={
+                  category === "Investimento" ? "Ex.: Monitor, cadeira, notebook" : "Ex.: Luz, água, internet"
+                }
+                value={description}
+                onChange={(event) => setDescription(event.target.value)}
+              />
+            </label>
+            <div className="formgrid">
+              <label>
+                Valor
+                <input placeholder="R$ 0,00" value={amount} onChange={(event) => setAmount(event.target.value)} />
+              </label>
+              <label>
+                Vencimento
+                <input type="date" value={dueDate} onChange={(event) => setDueDate(event.target.value)} />
+              </label>
+            </div>
+            <label>
+              Status
+              <select value={payStatus} onChange={(event) => setPayStatus(event.target.value)}>
+                <option value="payable">A pagar</option>
+                <option value="paid">Pago</option>
               </select>
             </label>
           </>
