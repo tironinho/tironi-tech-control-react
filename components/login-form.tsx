@@ -46,6 +46,7 @@ export function LoginForm() {
           Usuário
           <input
             autoComplete="username"
+            placeholder="Digite seu usuário"
             value={username}
             onChange={(event) => setUsername(event.target.value)}
           />
@@ -55,6 +56,7 @@ export function LoginForm() {
           <input
             type="password"
             autoComplete="current-password"
+            placeholder="Digite sua senha"
             value={password}
             onChange={(event) => setPassword(event.target.value)}
           />
