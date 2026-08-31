@@ -1,6 +1,6 @@
 import { DashboardApp } from "@/components/dashboard-app";
 import { getDashboardData } from "@/lib/dashboard";
-import { isDatabaseConfigured } from "@/db";
+import { isDatabaseConfigured } from "@/lib/supabase";
 
 export const dynamic = "force-dynamic";
 export const maxDuration = 15;
@@ -12,8 +12,8 @@ export default async function Home() {
         <section className="panel">
           <h2>Banco ainda não conectado</h2>
           <p>
-            Defina <code>POSTGRES_URL</code> ou <code>DATABASE_URL</code> nas
-            Environment Variables da Vercel com a URI do Transaction pooler.
+            Defina <code>SUPABASE_URL</code> e <code>SUPABASE_SERVICE_ROLE_KEY</code> nas
+            Environment Variables da Vercel.
           </p>
         </section>
       </main>

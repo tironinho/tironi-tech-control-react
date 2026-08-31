@@ -1,83 +1,89 @@
-import { getDb } from "@/db";
-import {
-  clients,
-  monthlyMetrics,
-  projects,
-  proposals,
-  settings,
-  teamMembers,
-  transactions,
-} from "@/db/schema";
+import "server-only";
 import type { DashboardData } from "@/lib/dashboard-types";
 import { monthsSince, toNumber } from "@/lib/money";
+import { getSupabase } from "@/lib/supabase";
 
 export type { DashboardData, DashboardTransaction } from "@/lib/dashboard-types";
 
+function throwIfError(error: { message: string } | null, label: string) {
+  if (error) throw new Error(`${label}: ${error.message}`);
+}
+
 export async function getDashboardData(): Promise<DashboardData> {
-  const db = getDb();
+  const supabase = getSupabase();
   const [
-    clientRows,
-    teamRows,
+    clients,
+    team,
     projectRows,
     proposalRows,
     transactionRows,
-    metricRows,
+    metrics,
     settingRows,
   ] = await Promise.all([
-    db.select().from(clients).orderBy(clients.name),
-    db.select().from(teamMembers).orderBy(teamMembers.id),
-    db.select().from(projects).orderBy(projects.id),
-    db.select().from(proposals).orderBy(proposals.id),
-    db.select().from(transactions).orderBy(transactions.dueDate),
-    db.select().from(monthlyMetrics).orderBy(monthlyMetrics.month),
-    db.select().from(settings),
+    supabase.from("clients").select("*").order("name"),
+    supabase.from("team_members").select("*").order("id"),
+    supabase.from("projects").select("*").order("id"),
+    supabase.from("proposals").select("*").order("id"),
+    supabase.from("transactions").select("*").order("due_date"),
+    supabase.from("monthly_metrics").select("*").order("month"),
+    supabase.from("settings").select("*"),
   ]);
 
-  const settingMap = Object.fromEntries(settingRows.map((row) => [row.key, row.value]));
+  throwIfError(clients.error, "clients");
+  throwIfError(team.error, "team_members");
+  throwIfError(projectRows.error, "projects");
+  throwIfError(proposalRows.error, "proposals");
+  throwIfError(transactionRows.error, "transactions");
+  throwIfError(metrics.error, "monthly_metrics");
+  throwIfError(settingRows.error, "settings");
+
+  const settingMap = Object.fromEntries(
+    (settingRows.data ?? []).map((row) => [row.key, row.value]),
+  );
 
   return {
-    clients: clientRows.map((row) => ({
-      id: row.id,
+    clients: (clients.data ?? []).map((row) => ({
+      id: Number(row.id),
       name: row.name,
       initials: row.initials,
       mrr: toNumber(row.mrr),
       ltv: toNumber(row.ltv),
-      months: monthsSince(row.startedAt),
+      months: monthsSince(row.started_at),
     })),
-    team: teamRows.map((row) => ({
-      id: row.id,
+    team: (team.data ?? []).map((row) => ({
+      id: Number(row.id),
       initials: row.initials,
       name: row.name,
       role: row.role,
-      monthlyCost: toNumber(row.monthlyCost),
+      monthlyCost: toNumber(row.monthly_cost),
     })),
-    projects: projectRows.map((row) => ({
-      id: row.id,
+    projects: (projectRows.data ?? []).map((row) => ({
+      id: Number(row.id),
       name: row.name,
-      clientName: row.clientName,
-      progress: row.progress,
-      dueDate: row.dueDate,
+      clientName: row.client_name,
+      progress: Number(row.progress),
+      dueDate: row.due_date,
       status: row.status,
     })),
-    proposals: proposalRows.map((row) => ({
-      id: row.id,
+    proposals: (proposalRows.data ?? []).map((row) => ({
+      id: Number(row.id),
       stage: row.stage,
-      clientName: row.clientName,
+      clientName: row.client_name,
       title: row.title,
       amount: toNumber(row.amount),
-      probability: row.probability,
+      probability: Number(row.probability),
     })),
-    transactions: transactionRows.map((row) => ({
-      id: row.id,
+    transactions: (transactionRows.data ?? []).map((row) => ({
+      id: Number(row.id),
       description: row.description,
       counterparty: row.counterparty,
       category: row.category,
       type: row.type as "income" | "expense",
       amount: toNumber(row.amount),
-      dueDate: row.dueDate,
+      dueDate: row.due_date,
       status: row.status,
     })),
-    chart: metricRows.map((row) => ({
+    chart: (metrics.data ?? []).map((row) => ({
       month: row.month,
       revenue: toNumber(row.revenue),
       expenses: toNumber(row.expenses),
@@ -96,23 +102,22 @@ export async function createTransaction(input: {
   amount: number;
   dueDate: string;
 }) {
-  const db = getDb();
-  const [row] = await db
-    .insert(transactions)
-    .values({
+  const supabase = getSupabase();
+  const { data, error } = await supabase
+    .from("transactions")
+    .insert({
       description: input.description,
       counterparty: input.counterparty,
       category: input.category,
       type: input.type,
       amount: input.amount.toFixed(2),
-      dueDate: input.dueDate,
+      due_date: input.dueDate,
       status: input.type === "income" ? "receivable" : "payable",
     })
-    .returning();
+    .select("id")
+    .single();
 
-  if (!row) {
-    throw new Error("Could not create transaction");
-  }
-
-  return row;
+  throwIfError(error, "transactions");
+  if (!data) throw new Error("Could not create transaction");
+  return data;
 }
