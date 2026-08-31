@@ -4,6 +4,7 @@ import { useState } from "react";
 import { useRouter } from "next/navigation";
 import { ArrowDownRight, ArrowUpRight, Check, Plus, X } from "lucide-react";
 import type { DashboardData } from "@/lib/dashboard-types";
+import { addMonths, isRecurringIncome, monthlyDates } from "@/lib/recurrence";
 
 export type CreateKind = "transaction" | "expense" | "client" | "team" | "project" | "proposal";
 
@@ -28,12 +29,14 @@ export type ModalEdit = {
   title?: string;
   probability?: number;
   monthlyCost?: number;
+  endsAt?: string | null;
+  seriesId?: string | null;
 };
 
 const labels: Record<CreateKind, { title: string; subtitle: string; save: string; header: string }> = {
   transaction: {
     title: "Novo lançamento",
-    subtitle: "Informe o valor e de qual cliente vem a receita.",
+    subtitle: "Informe o valor, o cliente e até quando o contrato vale.",
     save: "Salvar lançamento",
     header: "Novo lançamento",
   },
@@ -72,7 +75,7 @@ const labels: Record<CreateKind, { title: string; subtitle: string; save: string
 const editTitles: Record<CreateKind, { title: string; subtitle: string; save: string }> = {
   transaction: {
     title: "Editar lançamento",
-    subtitle: "Atualize a receita e o cliente vinculado.",
+    subtitle: "Atualize o contrato e os meses projetados da receita.",
     save: "Salvar alterações",
   },
   expense: {
@@ -129,6 +132,20 @@ function moneyInput(value?: number) {
   return value.toLocaleString("pt-BR", { minimumFractionDigits: 2, maximumFractionDigits: 2 });
 }
 
+function contractPreview(start: string, end: string, amountValue: string) {
+  try {
+    const dates = monthlyDates(start, end);
+    const parsed = parseMoney(amountValue);
+    const total = parsed ? parsed * dates.length : 0;
+    const totalLabel = total
+      ? total.toLocaleString("pt-BR", { style: "currency", currency: "BRL" })
+      : "";
+    return `${dates.length} mensalidades até o fim do contrato${totalLabel ? ` · ${totalLabel} garantidos` : ""}.`;
+  } catch {
+    return "Informe o primeiro vencimento e a data de fim do contrato.";
+  }
+}
+
 export function CreateButton({
   kind,
   onOpen,
@@ -168,6 +185,7 @@ export function CreateRecordModal({
   const [description, setDescription] = useState(edit?.description ?? "");
   const [amount, setAmount] = useState(moneyInput(edit?.amount ?? edit?.monthlyCost));
   const [dueDate, setDueDate] = useState(edit?.dueDate ?? today);
+  const [endsAt, setEndsAt] = useState(edit?.endsAt ?? addMonths(edit?.dueDate ?? today, 11));
   const [category, setCategory] = useState(
     edit?.category ?? (kind === "expense" ? "Custo recorrente" : "Receita recorrente"),
   );
@@ -214,6 +232,9 @@ export function CreateRecordModal({
         if (recordType === "income" && !selectedClientId) {
           throw new Error("Selecione o cliente da receita.");
         }
+        if (recordType === "income" && isRecurringIncome(category, recordType) && !endsAt) {
+          throw new Error("Informe a data de fim do contrato.");
+        }
         await send(method, url, {
           description: description.trim(),
           clientId: selectedClientId,
@@ -222,6 +243,8 @@ export function CreateRecordModal({
           amount: parsed,
           dueDate,
           status: payStatus,
+          endsAt:
+            recordType === "income" && isRecurringIncome(category, recordType) ? endsAt : null,
         });
       } else if (kind === "client") {
         const parsedMrr = parseMoney(mrr) || 0;
@@ -352,10 +375,19 @@ export function CreateRecordModal({
                 <input placeholder="R$ 0,00" value={amount} onChange={(event) => setAmount(event.target.value)} />
               </label>
               <label>
-                Vencimento
+                {type === "income" && category === "Receita recorrente" ? "Primeiro vencimento" : "Vencimento"}
                 <input type="date" value={dueDate} onChange={(event) => setDueDate(event.target.value)} />
               </label>
             </div>
+            {type === "income" && category === "Receita recorrente" ? (
+              <>
+                <label>
+                  Fim do contrato
+                  <input type="date" value={endsAt} onChange={(event) => setEndsAt(event.target.value)} />
+                </label>
+                <p className="hint">{contractPreview(dueDate, endsAt, amount)}</p>
+              </>
+            ) : null}
             <div className="formgrid">
               <label>
                 Categoria

@@ -8,6 +8,9 @@ export type DashboardTransaction = {
   amount: number;
   dueDate: string;
   status: string;
+  seriesId: string | null;
+  endsAt: string | null;
+  seriesStart: string;
 };
 
 export type DashboardData = {

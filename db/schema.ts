@@ -73,12 +73,16 @@ export const transactions = tironiTech.table(
     amount: numeric("amount", { precision: 12, scale: 2 }).notNull(),
     dueDate: date("due_date").notNull(),
     status: text("status").notNull(),
+    seriesId: text("series_id"),
+    endsAt: date("ends_at"),
+    recurrence: text("recurrence").notNull().default("none"),
     createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
   },
   (table) => [
     index("transactions_due_date_idx").on(table.dueDate),
     index("transactions_type_idx").on(table.type),
     index("transactions_client_id_idx").on(table.clientId),
+    index("transactions_series_id_idx").on(table.seriesId),
   ],
 );
 

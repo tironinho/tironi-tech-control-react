@@ -25,7 +25,8 @@ export function formatDueDate(isoDate: string) {
   const month = new Intl.DateTimeFormat("pt-BR", { month: "short" })
     .format(date)
     .replace(".", "");
-  return `${day} ${month}`;
+  const year = new Intl.DateTimeFormat("pt-BR", { year: "numeric" }).format(date);
+  return `${day} ${month} ${year}`;
 }
 
 export function monthsSince(isoDate: string, now = new Date("2026-08-30")) {

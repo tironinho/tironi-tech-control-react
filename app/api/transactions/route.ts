@@ -21,11 +21,22 @@ const payloadSchema = z
     amount: z.number().positive(),
     dueDate: z.string().regex(/^\d{4}-\d{2}-\d{2}$/),
     status: z.enum(["receivable", "expected", "payable", "paid"]).optional(),
+    endsAt: z.string().regex(/^\d{4}-\d{2}-\d{2}$/).nullable().optional(),
   })
   .refine((payload) => payload.type !== "income" || payload.clientId != null, {
     message: "Selecione o cliente da receita.",
     path: ["clientId"],
-  });
+  })
+  .refine(
+    (payload) =>
+      payload.category !== "Receita recorrente" ||
+      payload.type !== "income" ||
+      Boolean(payload.endsAt),
+    {
+      message: "Informe a data de fim do contrato.",
+      path: ["endsAt"],
+    },
+  );
 
 function fail(error: unknown) {
   const message = error instanceof Error ? error.message : "Invalid payload";

@@ -36,8 +36,8 @@ import {
   X,
 } from "lucide-react";
 import type { DashboardData } from "@/lib/dashboard-types";
-import { latestMonth, previousMonth } from "@/lib/dashboard-types";
 import { formatDueDate, money, monthLabel } from "@/lib/money";
+import { addMonths, monthKey, monthStart } from "@/lib/recurrence";
 import { CreateButton, CreateRecordModal, type CreateKind, type ModalEdit } from "@/components/create-record-modal";
 import { ConfirmDelete, RecordTools } from "@/components/record-tools";
 
@@ -91,11 +91,13 @@ function transactionEdit(item: DashboardData["transactions"][number]): ModalEdit
     id: item.id,
     description: item.description,
     amount: item.amount,
-    dueDate: item.dueDate,
+    dueDate: item.seriesStart,
     category: item.category,
     type: item.type,
     clientId: item.clientId,
     status: item.status,
+    endsAt: item.endsAt,
+    seriesId: item.seriesId,
   };
 }
 
@@ -165,7 +167,7 @@ function Status({ children, t = "" }: { children: React.ReactNode; t?: string })
 
 function Graph({ chart }: { chart: DashboardData["chart"] }) {
   const data = chart.map((row) => ({
-    m: monthLabel(row.month),
+    m: `${monthLabel(row.month)}/${row.month.slice(2, 4)}`,
     r: row.revenue,
     d: row.expenses,
   }));
@@ -208,6 +210,7 @@ export function DashboardApp({ initialData }: { initialData: DashboardData }) {
     kind: CreateKind;
     id: number;
     label: string;
+    series?: boolean;
   } | null>(null);
   const [deleting, setDeleting] = useState(false);
   const [deleteError, setDeleteError] = useState("");
@@ -243,8 +246,14 @@ export function DashboardApp({ initialData }: { initialData: DashboardData }) {
     }
   }
 
-  const current = latestMonth(initialData.chart);
-  const previous = previousMonth(initialData.chart);
+  const today = new Date().toISOString().slice(0, 10);
+  const thisMonth = monthKey(today);
+  const orderedChart = [...initialData.chart].sort((a, b) => a.month.localeCompare(b.month));
+  const current =
+    orderedChart.find((row) => monthKey(row.month) === thisMonth) ??
+    orderedChart.filter((row) => monthKey(row.month) <= thisMonth).at(-1) ??
+    null;
+  const previous = orderedChart.filter((row) => monthKey(row.month) < thisMonth).at(-1) ?? null;
   const revenue = current?.revenue ?? 0;
   const expenses = current?.expenses ?? 0;
   const net = revenue - expenses;
@@ -258,11 +267,24 @@ export function DashboardApp({ initialData }: { initialData: DashboardData }) {
     (sum, item) => sum + (item.amount * item.probability) / 100,
     0,
   );
-  const upcomingIncome = initialData.transactions
-    .filter((item) => item.type === "income")
-    .reduce((sum, item) => sum + item.amount, 0);
+  const nextMonth = addMonths(today, 1);
   const incomeRows = initialData.transactions.filter((item) => item.type === "income");
   const expenseRows = initialData.transactions.filter((item) => item.type === "expense");
+  const upcomingIncome = incomeRows
+    .filter((item) => item.dueDate >= today && item.dueDate <= nextMonth)
+    .reduce((sum, item) => sum + item.amount, 0);
+  const guaranteed = incomeRows
+    .filter((item) => item.dueDate >= monthStart(today))
+    .reduce((sum, item) => sum + item.amount, 0);
+  const projectedMonths = [...new Set(incomeRows.map((item) => monthKey(item.dueDate)))]
+    .filter((key) => key >= monthKey(today))
+    .sort()
+    .map((key) => ({
+      month: `${key}-01`,
+      amount: incomeRows
+        .filter((item) => monthKey(item.dueDate) === key)
+        .reduce((sum, item) => sum + item.amount, 0),
+    }));
   const recurringRows = expenseRows.filter((item) => item.category !== "Investimento");
   const investmentRows = expenseRows.filter((item) => item.category === "Investimento");
   const recurringTotal = recurringRows.reduce((sum, item) => sum + item.amount, 0);
@@ -301,7 +323,7 @@ export function DashboardApp({ initialData }: { initialData: DashboardData }) {
       <Metric
         n="Saldo projetado"
         v={money(net + upcomingIncome)}
-        s="Próximos 30 dias"
+        s="Próximo mês"
         I={WalletCards}
         t="violet"
       />
@@ -368,13 +390,13 @@ export function DashboardApp({ initialData }: { initialData: DashboardData }) {
           <section className="panel">
             <Head n="Próximos recebimentos" s="Valores previstos para entrar" />
             {initialData.transactions
-              .filter((item) => item.type === "income")
+              .filter((item) => item.type === "income" && item.dueDate >= today)
               .slice(0, 3)
               .map((item) => (
                 <div className="item" key={item.id}>
                   <i>
                     {formatDueDate(item.dueDate).slice(0, 2)}
-                    <small>SET</small>
+                    <small>{monthLabel(item.dueDate)}</small>
                   </i>
                   <span>
                     <b>{item.counterparty}</b>
@@ -406,13 +428,34 @@ export function DashboardApp({ initialData }: { initialData: DashboardData }) {
       <>
         <Title
           n="Financeiro"
-          s="Fluxo de caixa, resultado e projeções."
+          s="Fluxo de caixa, resultado e a receita já contratada nos próximos meses."
           action={<CreateButton kind="transaction" onOpen={openCreate} />}
         />
         {metrics}
         <section className="panel biggraph">
-          <Head n="Fluxo de caixa realizado" s="Visão mensal de entradas e saídas" />
+          <Head n="Fluxo de caixa" s="Realizado e projetado a partir dos contratos" />
           <Graph chart={initialData.chart} />
+        </section>
+        <section className="panel">
+          <Head
+            n="Receita garantida"
+            s={`${projectedMonths.length} meses com contrato · ${money(guaranteed)} no período`}
+          />
+          {projectedMonths.length ? (
+            projectedMonths.map((row) => (
+              <div className="bar" key={row.month}>
+                <span>
+                  {monthLabel(row.month)} {row.month.slice(0, 4)}
+                  <b>{money(row.amount)}</b>
+                </span>
+                <div>
+                  <i style={{ width: `${Math.min(100, percent(row.amount, Math.max(...projectedMonths.map((item) => item.amount), 1)))}%` }} />
+                </div>
+              </div>
+            ))
+          ) : (
+            <p className="empty">Cadastre um contrato com fim definido para ver a projeção mês a mês.</p>
+          )}
         </section>
       </>
     ),
@@ -424,7 +467,7 @@ export function DashboardApp({ initialData }: { initialData: DashboardData }) {
           action={<CreateButton kind="transaction" onOpen={openCreate} />}
         />
         <section className="panel">
-          <Head n="Agenda de receitas" s={`${incomeRows.length} lançamentos`} />
+          <Head n="Agenda de receitas" s={`${incomeRows.length} lançamentos · receita replicada até o fim de cada contrato`} />
           <div className="table">
             <div className="row accounts th">
               <span>Cliente</span>
@@ -452,7 +495,14 @@ export function DashboardApp({ initialData }: { initialData: DashboardData }) {
                     onEdit={() => setModal({ kind: "transaction", edit: transactionEdit(item) })}
                     onDelete={() => {
                       setDeleteError("");
-                      setPendingDelete({ kind: "transaction", id: item.id, label: item.description });
+                      setPendingDelete({
+                        kind: "transaction",
+                        id: item.id,
+                        label: item.seriesId
+                          ? `${item.description} (contrato inteiro)`
+                          : item.description,
+                        series: Boolean(item.seriesId),
+                      });
                     }}
                   />
                 </div>
@@ -861,8 +911,12 @@ export function DashboardApp({ initialData }: { initialData: DashboardData }) {
       ) : null}
       {pendingDelete ? (
         <ConfirmDelete
-          title="Excluir registro"
-          message={`Excluir “${pendingDelete.label}”? Essa ação não pode ser desfeita.`}
+          title={pendingDelete.series ? "Excluir contrato" : "Excluir registro"}
+          message={
+            pendingDelete.series
+              ? `Excluir “${pendingDelete.label}” e todas as mensalidades projetadas? Essa ação não pode ser desfeita.`
+              : `Excluir “${pendingDelete.label}”? Essa ação não pode ser desfeita.`
+          }
           error={deleteError}
           busy={deleting}
           onCancel={() => setPendingDelete(null)}
