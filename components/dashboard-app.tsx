@@ -435,6 +435,22 @@ export function DashboardApp({
     ...item,
     stage: moves[`proposal-${item.id}`] ?? item.stage,
   }));
+  const hotLeads = proposals.filter((item) => item.leadTemperature === "quente").length;
+  const coldLeads = proposals.filter((item) => item.leadTemperature === "frio").length;
+  const openLeads = proposals.filter(
+    (item) => item.stage !== "Aprovada" && item.stage !== "Não vingou",
+  ).length;
+  const channelBreakdown = [...proposals.reduce((map, item) => {
+    const key = item.channel || "Sem canal";
+    map.set(key, (map.get(key) ?? 0) + 1);
+    return map;
+  }, new Map<string, number>())]
+    .map(([name, count]) => ({ name, count }))
+    .sort((a, b) => b.count - a.count);
+  const closedLeads = proposals.filter(
+    (item) => item.stage === "Aprovada" || item.stage === "Não vingou",
+  ).length;
+  const wonLeads = proposals.filter((item) => item.stage === "Aprovada").length;
   const projects = initialData.projects.map((item) => ({
     ...item,
     status: moves[`project-${item.id}`] ?? item.status,
@@ -917,13 +933,80 @@ export function DashboardApp({
       <>
         <Title
           n="Propostas comerciais"
-          s="Arraste os cards entre estágios. Histórico, contato e responsável ficam na edição."
+          s="Acompanhe leads frios e quentes, canal de origem e o funil completo. Clique no card para editar."
           action={<CreateButton kind="proposal" onOpen={openCreate} />}
         />
         <div className="metrics three">
           <Metric n="Pipeline total" v={money(pipeline)} s={`${initialData.proposals.length} oportunidades`} I={FileText} />
           <Metric n="Pipeline ponderado" v={money(weighted)} s="Por probabilidade" I={TrendingUp} t="blue" />
-          <Metric n="Conversão" v={`${initialData.conversionRate}%`} s="Últimos 90 dias" I={Target} t="violet" />
+          <Metric
+            n="Conversão"
+            v={`${initialData.conversionRate}%`}
+            s={
+              closedLeads
+                ? `${wonLeads} aprovadas de ${closedLeads} finalizadas`
+                : "Sem leads finalizados ainda"
+            }
+            I={Target}
+            t="violet"
+          />
+        </div>
+        <div className="grid">
+          <section className="panel">
+            <Head n="Acompanhamento de leads" s="Temperatura e volume no funil" />
+            <div className="bar">
+              <span>
+                Leads quentes
+                <b>{hotLeads}</b>
+              </span>
+              <div>
+                <i style={{ width: `${Math.min(100, percent(hotLeads, Math.max(proposals.length, 1)))}%` }} />
+              </div>
+            </div>
+            <div className="bar">
+              <span>
+                Leads frios
+                <b>{coldLeads}</b>
+              </span>
+              <div>
+                <i style={{ width: `${Math.min(100, percent(coldLeads, Math.max(proposals.length, 1)))}%` }} />
+              </div>
+            </div>
+            <div className="bar">
+              <span>
+                Em aberto no funil
+                <b>{openLeads}</b>
+              </span>
+              <div>
+                <i style={{ width: `${Math.min(100, percent(openLeads, Math.max(proposals.length, 1)))}%` }} />
+              </div>
+            </div>
+          </section>
+          <section className="panel">
+            <Head n="Canais de origem" s="De onde os leads chegaram" />
+            {channelBreakdown.length ? (
+              channelBreakdown.map((item) => (
+                <div className="bar" key={item.name}>
+                  <span>
+                    {item.name}
+                    <b>{item.count}</b>
+                  </span>
+                  <div>
+                    <i
+                      style={{
+                        width: `${Math.min(
+                          100,
+                          percent(item.count, Math.max(...channelBreakdown.map((row) => row.count), 1)),
+                        )}%`,
+                      }}
+                    />
+                  </div>
+                </div>
+              ))
+            ) : (
+              <p className="empty">Cadastre o canal em cada lead para ver a distribuição.</p>
+            )}
+          </section>
         </div>
         <KanbanBoard
           columns={PROPOSAL_STAGES}
@@ -948,6 +1031,8 @@ export function DashboardApp({
                       phone: item.phone,
                       notes: item.notes,
                       ownerId: item.ownerId,
+                      leadTemperature: item.leadTemperature,
+                      channel: item.channel,
                     },
                   })
                 }
@@ -956,6 +1041,12 @@ export function DashboardApp({
                   setPendingDelete({ kind: "proposal", id: item.id, label: item.title });
                 }}
               />
+              <div className="lead-tags">
+                <span className={item.leadTemperature === "quente" ? "hot" : "cold"}>
+                  {item.leadTemperature === "quente" ? "Quente" : "Frio"}
+                </span>
+                {item.channel ? <span className="channel">{item.channel}</span> : null}
+              </div>
               <h3>{item.title}</h3>
               <strong>{money(item.amount)}</strong>
               <footer>

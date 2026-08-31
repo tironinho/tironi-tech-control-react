@@ -14,12 +14,14 @@ const payloadSchema = z.object({
   stage: z.enum(PROPOSAL_STAGES),
   clientName: z.string().trim().min(2).max(120),
   title: z.string().trim().min(2).max(160),
-  amount: z.number().positive(),
+  amount: z.number().min(0),
   probability: z.number().int().min(0).max(100),
   contactName: z.string().trim().max(120).optional().default(""),
   phone: z.string().trim().max(40).optional().default(""),
   notes: z.string().trim().max(2000).optional().default(""),
   ownerId: z.number().int().positive().nullable().optional().default(null),
+  leadTemperature: z.enum(["quente", "frio"]).default("quente"),
+  channel: z.string().trim().max(80).optional().default(""),
   historyNote: z.string().trim().max(300).optional(),
 });
 

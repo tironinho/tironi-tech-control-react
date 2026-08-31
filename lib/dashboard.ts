@@ -2,7 +2,7 @@ import "server-only";
 import type { DashboardData, PipelineData } from "@/lib/dashboard-types";
 import { monthsSince, toNumber } from "@/lib/money";
 import { isRecurringIncome, monthKey, monthlyDates, normalizeDate } from "@/lib/recurrence";
-import { mapLegacyProjectStage } from "@/lib/pipeline";
+import { mapLegacyProjectStage, mapLegacyProposalStage, proposalConversionRate } from "@/lib/pipeline";
 import { hashPassword } from "@/lib/password";
 import { getSupabase } from "@/lib/supabase";
 
@@ -181,7 +181,7 @@ export async function getDashboardData(): Promise<DashboardData> {
     })),
     proposals: (proposalRows.data ?? []).map((row) => ({
       id: Number(row.id),
-      stage: row.stage,
+      stage: mapLegacyProposalStage(row.stage),
       clientName: row.client_name,
       title: row.title,
       amount: toNumber(row.amount),
@@ -191,6 +191,9 @@ export async function getDashboardData(): Promise<DashboardData> {
       notes: row.notes ?? "",
       ownerId: row.owner_id == null ? null : Number(row.owner_id),
       ownerName: row.owner_id == null ? "" : (teamName.get(Number(row.owner_id)) ?? ""),
+      leadTemperature: row.lead_temperature === "frio" ? "frio" : "quente",
+      channel: row.channel ?? "",
+      createdAt: row.created_at ?? null,
     })),
     transactions,
     chart: buildFinanceChart(
@@ -202,7 +205,12 @@ export async function getDashboardData(): Promise<DashboardData> {
       transactions,
     ),
     healthScore: Number(settingMap.health_score ?? 0),
-    conversionRate: Number(settingMap.conversion_rate ?? 0),
+    conversionRate: proposalConversionRate(
+      (proposalRows.data ?? []).map((row) => ({
+        stage: row.stage,
+        createdAt: row.created_at ?? null,
+      })),
+    ),
     valuationMultiple: Number(settingMap.valuation_multiple ?? 4.2),
   };
 }
@@ -269,7 +277,7 @@ export async function getPipelineData(): Promise<PipelineData> {
     })),
     proposals: (proposalRows.data ?? []).map((row) => ({
       id: Number(row.id),
-      stage: row.stage,
+      stage: mapLegacyProposalStage(row.stage),
       clientName: row.client_name,
       title: row.title,
       amount: toNumber(row.amount),
@@ -279,7 +287,16 @@ export async function getPipelineData(): Promise<PipelineData> {
       notes: row.notes ?? "",
       ownerId: row.owner_id == null ? null : Number(row.owner_id),
       ownerName: row.owner_id == null ? "" : (teamName.get(Number(row.owner_id)) ?? ""),
+      leadTemperature: row.lead_temperature === "frio" ? "frio" : "quente",
+      channel: row.channel ?? "",
+      createdAt: row.created_at ?? null,
     })),
+    conversionRate: proposalConversionRate(
+      (proposalRows.data ?? []).map((row) => ({
+        stage: row.stage,
+        createdAt: row.created_at ?? null,
+      })),
+    ),
   };
 }
 
@@ -602,6 +619,8 @@ export async function createProposal(input: {
   phone: string;
   notes: string;
   ownerId: number | null;
+  leadTemperature: "quente" | "frio";
+  channel: string;
   author?: string;
 }) {
   const supabase = getSupabase();
@@ -617,6 +636,8 @@ export async function createProposal(input: {
       phone: input.phone,
       notes: input.notes,
       owner_id: input.ownerId,
+      lead_temperature: input.leadTemperature,
+      channel: input.channel,
     })
     .select("id")
     .single();
@@ -754,6 +775,8 @@ export async function updateProposal(
     phone: string;
     notes: string;
     ownerId: number | null;
+    leadTemperature: "quente" | "frio";
+    channel: string;
   },
   author?: string,
 ) {
@@ -771,6 +794,8 @@ export async function updateProposal(
       phone: input.phone,
       notes: input.notes,
       owner_id: input.ownerId,
+      lead_temperature: input.leadTemperature,
+      channel: input.channel,
     },
     "Proposta não encontrada.",
   );

@@ -122,7 +122,7 @@ export function WorkspaceApp({
             <h2>{isComercial ? "Propostas comerciais" : "Projetos em andamento"}</h2>
             <p>
               {isComercial
-                ? "Arraste os cards para atualizar o estágio. Histórico, contato e responsável ficam na edição."
+                ? "Arraste os cards para atualizar o estágio. Temperatura, canal e histórico ficam na edição."
                 : "Arraste os cards para atualizar o status da entrega e acompanhe o histórico de cada projeto."}
             </p>
           </div>
@@ -160,9 +160,54 @@ export function WorkspaceApp({
                   <Target size={18} />
                 </i>
                 <div>
+                  <small>Conversão</small>
+                  <strong>{data.conversionRate}%</strong>
+                  <span>
+                    {
+                      proposals.filter(
+                        (item) => item.stage === "Aprovada" || item.stage === "Não vingou",
+                      ).length
+                    }{" "}
+                    finalizadas
+                  </span>
+                </div>
+              </article>
+            </div>
+            <div className="metrics three">
+              <article className="metric">
+                <i>
+                  <TrendingUp size={18} />
+                </i>
+                <div>
+                  <small>Leads quentes</small>
+                  <strong>{String(proposals.filter((item) => item.leadTemperature === "quente").length)}</strong>
+                  <span>No funil</span>
+                </div>
+              </article>
+              <article className="metric">
+                <i className="blue">
+                  <FileText size={18} />
+                </i>
+                <div>
+                  <small>Leads frios</small>
+                  <strong>{String(proposals.filter((item) => item.leadTemperature === "frio").length)}</strong>
+                  <span>No funil</span>
+                </div>
+              </article>
+              <article className="metric">
+                <i className="amber">
+                  <Target size={18} />
+                </i>
+                <div>
                   <small>Em aberto</small>
-                  <strong>{proposals.filter((item) => item.stage !== "Aprovada" && item.stage !== "Perdida").length}</strong>
-                  <span>Fora de aprovada/perdida</span>
+                  <strong>
+                    {String(
+                      proposals.filter(
+                        (item) => item.stage !== "Aprovada" && item.stage !== "Não vingou",
+                      ).length,
+                    )}
+                  </strong>
+                  <span>Fora de aprovada/não vingou</span>
                 </div>
               </article>
             </div>
@@ -189,11 +234,19 @@ export function WorkspaceApp({
                           phone: item.phone,
                           notes: item.notes,
                           ownerId: item.ownerId,
+                          leadTemperature: item.leadTemperature,
+                          channel: item.channel,
                         },
                       })
                     }
                     onDelete={() => setPendingDelete({ id: item.id, label: item.title })}
                   />
+                  <div className="lead-tags">
+                    <span className={item.leadTemperature === "quente" ? "hot" : "cold"}>
+                      {item.leadTemperature === "quente" ? "Quente" : "Frio"}
+                    </span>
+                    {item.channel ? <span className="channel">{item.channel}</span> : null}
+                  </div>
                   <h3>{item.title}</h3>
                   <strong>{money(item.amount)}</strong>
                   <footer>

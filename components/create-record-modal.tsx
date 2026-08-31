@@ -5,7 +5,7 @@ import { useRouter } from "next/navigation";
 import { ArrowDownRight, ArrowUpRight, Check, Plus, X } from "lucide-react";
 import type { DashboardData } from "@/lib/dashboard-types";
 import { addMonths, isRecurringIncome, monthlyDates, normalizeDate } from "@/lib/recurrence";
-import { PROJECT_STAGES, PROPOSAL_STAGES } from "@/lib/pipeline";
+import { LEAD_CHANNELS, LEAD_TEMPERATURES, PROJECT_STAGES, PROPOSAL_STAGES } from "@/lib/pipeline";
 
 export type CreateKind = "transaction" | "expense" | "client" | "team" | "project" | "proposal";
 
@@ -38,6 +38,8 @@ export type ModalEdit = {
   ownerId?: number | null;
   sectorId?: number | null;
   username?: string;
+  leadTemperature?: "quente" | "frio";
+  channel?: string;
 };
 
 const labels: Record<CreateKind, { title: string; subtitle: string; save: string; header: string }> = {
@@ -73,7 +75,7 @@ const labels: Record<CreateKind, { title: string; subtitle: string; save: string
   },
   proposal: {
     title: "Nova proposta",
-    subtitle: "Cadastre uma oportunidade no pipeline.",
+    subtitle: "Cadastre o lead, o canal e a temperatura comercial.",
     save: "Salvar proposta",
     header: "Nova proposta",
   },
@@ -107,7 +109,7 @@ const editTitles: Record<CreateKind, { title: string; subtitle: string; save: st
   },
   proposal: {
     title: "Editar proposta",
-    subtitle: "Atualize estágio, contato, responsável e histórico.",
+    subtitle: "Atualize estágio, temperatura, canal, contato e histórico.",
     save: "Salvar alterações",
   },
 };
@@ -216,13 +218,17 @@ export function CreateRecordModal({
   const [clientKey, setClientKey] = useState(edit?.clientName ?? clients[0]?.name ?? "Interno");
   const [progress, setProgress] = useState(String(edit?.progress ?? 0));
   const [status, setStatus] = useState(edit?.projectStatus ?? "Em andamento");
-  const [stage, setStage] = useState(edit?.stage ?? "Diagnóstico");
+  const [stage, setStage] = useState(edit?.stage ?? "Início de lead");
   const [title, setTitle] = useState(edit?.title ?? "");
   const [probability, setProbability] = useState(String(edit?.probability ?? 30));
   const [contactName, setContactName] = useState(edit?.contactName ?? "");
   const [phone, setPhone] = useState(edit?.phone ?? "");
   const [notes, setNotes] = useState(edit?.notes ?? "");
   const [ownerId, setOwnerId] = useState(String(edit?.ownerId ?? ""));
+  const [leadTemperature, setLeadTemperature] = useState<"quente" | "frio">(
+    edit?.leadTemperature ?? "quente",
+  );
+  const [channel, setChannel] = useState(edit?.channel ?? "");
   const [sectorId, setSectorId] = useState(String(edit?.sectorId ?? ""));
   const [username, setUsername] = useState(edit?.username ?? "");
   const [password, setPassword] = useState("");
@@ -339,10 +345,11 @@ export function CreateRecordModal({
           historyNote: historyNote.trim() || undefined,
         });
       } else {
-        const parsed = parseMoney(amount);
-        if (!title.trim() || !clientKey.trim() || !parsed) {
-          throw new Error("Informe cliente, título e valor.");
+        const parsed = Number.isFinite(parseMoney(amount)) ? parseMoney(amount) || 0 : 0;
+        if (!title.trim() || !clientKey.trim()) {
+          throw new Error("Informe cliente e título do lead.");
         }
+        if (!channel.trim()) throw new Error("Informe o canal de origem do lead.");
         await send(method, url, {
           stage,
           clientName: clientKey.trim(),
@@ -353,6 +360,8 @@ export function CreateRecordModal({
           phone: phone.trim(),
           notes: notes.trim(),
           ownerId: Number(ownerId) || null,
+          leadTemperature,
+          channel: channel.trim(),
           historyNote: historyNote.trim() || undefined,
         });
       }
@@ -731,6 +740,30 @@ export function CreateRecordModal({
                 ))}
               </select>
             </label>
+            <div className="formgrid">
+              <label>
+                Temperatura do lead
+                <select
+                  value={leadTemperature}
+                  onChange={(event) => setLeadTemperature(event.target.value as "quente" | "frio")}
+                >
+                  {LEAD_TEMPERATURES.map((item) => (
+                    <option key={item} value={item}>
+                      {item === "quente" ? "Quente" : "Frio"}
+                    </option>
+                  ))}
+                </select>
+              </label>
+              <label>
+                Canal de origem
+                <select value={channel} onChange={(event) => setChannel(event.target.value)}>
+                  <option value="">Selecione o canal</option>
+                  {LEAD_CHANNELS.map((item) => (
+                    <option key={item}>{item}</option>
+                  ))}
+                </select>
+              </label>
+            </div>
             <div className="formgrid">
               <label>
                 Nome do contato

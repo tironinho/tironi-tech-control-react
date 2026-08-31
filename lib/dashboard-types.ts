@@ -65,6 +65,9 @@ export type DashboardData = {
     notes: string;
     ownerId: number | null;
     ownerName: string;
+    leadTemperature: "quente" | "frio";
+    channel: string;
+    createdAt: string | null;
   }[];
   transactions: DashboardTransaction[];
   chart: { month: string; revenue: number; expenses: number }[];
@@ -73,7 +76,10 @@ export type DashboardData = {
   valuationMultiple: number;
 };
 
-export type PipelineData = Pick<DashboardData, "clients" | "team" | "sectors" | "projects" | "proposals">;
+export type PipelineData = Pick<
+  DashboardData,
+  "clients" | "team" | "sectors" | "projects" | "proposals" | "conversionRate"
+>;
 
 export type ActivityItem = {
   id: number;
