@@ -121,3 +121,105 @@ export async function createTransaction(input: {
   if (!data) throw new Error("Could not create transaction");
   return data;
 }
+
+export async function createClient(input: {
+  name: string;
+  initials: string;
+  mrr: number;
+  ltv: number;
+  startedAt: string;
+}) {
+  const supabase = getSupabase();
+  const { data, error } = await supabase
+    .from("clients")
+    .insert({
+      name: input.name,
+      initials: input.initials,
+      mrr: input.mrr.toFixed(2),
+      ltv: input.ltv.toFixed(2),
+      started_at: input.startedAt,
+      status: "active",
+    })
+    .select("id")
+    .single();
+
+  throwIfError(error, "clients");
+  if (!data) throw new Error("Could not create client");
+  return data;
+}
+
+export async function createTeamMember(input: {
+  name: string;
+  initials: string;
+  role: string;
+  monthlyCost: number;
+}) {
+  const supabase = getSupabase();
+  const { data, error } = await supabase
+    .from("team_members")
+    .insert({
+      name: input.name,
+      initials: input.initials,
+      role: input.role,
+      monthly_cost: input.monthlyCost.toFixed(2),
+      status: "active",
+    })
+    .select("id")
+    .single();
+
+  throwIfError(error, "team_members");
+  if (!data) throw new Error("Could not create team member");
+  return data;
+}
+
+export async function createProject(input: {
+  name: string;
+  clientId: number | null;
+  clientName: string;
+  progress: number;
+  dueDate: string;
+  status: "on_track" | "at_risk";
+}) {
+  const supabase = getSupabase();
+  const { data, error } = await supabase
+    .from("projects")
+    .insert({
+      name: input.name,
+      client_id: input.clientId,
+      client_name: input.clientName,
+      progress: input.progress,
+      due_date: input.dueDate,
+      status: input.status,
+    })
+    .select("id")
+    .single();
+
+  throwIfError(error, "projects");
+  if (!data) throw new Error("Could not create project");
+  return data;
+}
+
+export async function createProposal(input: {
+  stage: string;
+  clientName: string;
+  title: string;
+  amount: number;
+  probability: number;
+}) {
+  const supabase = getSupabase();
+  const { data, error } = await supabase
+    .from("proposals")
+    .insert({
+      stage: input.stage,
+      client_name: input.clientName,
+      title: input.title,
+      amount: input.amount.toFixed(2),
+      probability: input.probability,
+    })
+    .select("id")
+    .single();
+
+  throwIfError(error, "proposals");
+  if (!data) throw new Error("Could not create proposal");
+  return data;
+}

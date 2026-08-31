@@ -1,7 +1,6 @@
 "use client";
 
 import { useMemo, useState } from "react";
-import { useRouter } from "next/navigation";
 import {
   Area,
   AreaChart,
@@ -26,7 +25,6 @@ import {
   LayoutDashboard,
   Menu,
   MoreHorizontal,
-  Plus,
   ReceiptText,
   Search,
   Settings,
@@ -39,6 +37,7 @@ import {
 import type { DashboardData } from "@/lib/dashboard-types";
 import { latestMonth, previousMonth } from "@/lib/dashboard-types";
 import { formatDueDate, money, monthLabel } from "@/lib/money";
+import { CreateButton, CreateRecordModal, type CreateKind } from "@/components/create-record-modal";
 
 type Screen =
   | "Visão geral"
@@ -110,18 +109,21 @@ function Metric({
   );
 }
 
-function Title({ n, s }: { n: string; s: string }) {
+function Title({ n, s, action }: { n: string; s: string; action?: React.ReactNode }) {
   return (
     <div className="title">
       <div>
         <h2>{n}</h2>
         <p>{s}</p>
       </div>
-      <button>
-        <CalendarDays size={16} />
-        Agosto de 2026
-        <ChevronDown size={15} />
-      </button>
+      <div className="title-actions">
+        {action}
+        <button type="button">
+          <CalendarDays size={16} />
+          Agosto de 2026
+          <ChevronDown size={15} />
+        </button>
+      </div>
     </div>
   );
 }
@@ -181,17 +183,9 @@ function Graph({ chart }: { chart: DashboardData["chart"] }) {
 }
 
 export function DashboardApp({ initialData }: { initialData: DashboardData }) {
-  const router = useRouter();
   const [screen, setScreen] = useState<Screen>("Visão geral");
   const [menu, setMenu] = useState(false);
-  const [modal, setModal] = useState(false);
-  const [saved, setSaved] = useState(false);
-  const [saving, setSaving] = useState(false);
-  const [type, setType] = useState<"income" | "expense">("income");
-  const [description, setDescription] = useState("");
-  const [amount, setAmount] = useState("");
-  const [dueDate, setDueDate] = useState("2026-09-05");
-  const [category, setCategory] = useState("Receita recorrente");
+  const [modal, setModal] = useState<CreateKind | null>(null);
 
   const current = latestMonth(initialData.chart);
   const previous = previousMonth(initialData.chart);
@@ -258,42 +252,26 @@ export function DashboardApp({ initialData }: { initialData: DashboardData }) {
     [mrr, net, revenue, weighted],
   );
 
-  async function save() {
-    const parsedAmount = Number(amount.replace(/\./g, "").replace(",", "."));
-    if (!description.trim() || !parsedAmount) return;
-    setSaving(true);
-    try {
-      const response = await fetch("/api/transactions", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          description: description.trim(),
-          counterparty: description.trim(),
-          category,
-          type,
-          amount: parsedAmount,
-          dueDate,
-        }),
-      });
-      if (!response.ok) throw new Error("save failed");
-      setSaved(true);
-      router.refresh();
-      setTimeout(() => {
-        setSaved(false);
-        setModal(false);
-        setDescription("");
-        setAmount("");
-        setSaving(false);
-      }, 800);
-    } catch {
-      setSaving(false);
-    }
-  }
+  const headerAction: Record<Screen, CreateKind | null> = {
+    "Visão geral": "transaction",
+    Financeiro: "transaction",
+    Contas: "transaction",
+    Propostas: "proposal",
+    Projetos: "project",
+    Equipe: "team",
+    Clientes: "client",
+    Valuation: null,
+  };
+  const currentAction = headerAction[screen];
 
   const view: Record<Screen, React.ReactNode> = {
     "Visão geral": (
       <>
-        <Title n="Boa noite, Tironi." s="Aqui está o panorama da empresa em agosto." />
+        <Title
+          n="Boa noite, Tironi."
+          s="Aqui está o panorama da empresa em agosto."
+          action={<CreateButton kind="transaction" onOpen={setModal} />}
+        />
         {metrics}
         <div className="grid wide">
           <section className="panel">
@@ -360,7 +338,11 @@ export function DashboardApp({ initialData }: { initialData: DashboardData }) {
     ),
     Financeiro: (
       <>
-        <Title n="Financeiro" s="Fluxo de caixa, resultado e projeções." />
+        <Title
+          n="Financeiro"
+          s="Fluxo de caixa, resultado e projeções."
+          action={<CreateButton kind="transaction" onOpen={setModal} />}
+        />
         {metrics}
         <section className="panel biggraph">
           <Head n="Fluxo de caixa realizado" s="Visão mensal de entradas e saídas" />
@@ -370,7 +352,11 @@ export function DashboardApp({ initialData }: { initialData: DashboardData }) {
     ),
     Contas: (
       <>
-        <Title n="Contas e lançamentos" s="Controle do que entra, sai e vence ao longo do tempo." />
+        <Title
+          n="Contas e lançamentos"
+          s="Controle do que entra, sai e vence ao longo do tempo."
+          action={<CreateButton kind="transaction" onOpen={setModal} />}
+        />
         <section className="panel">
           <Head n="Agenda financeira" s="Setembro de 2026" />
           <div className="table">
@@ -404,7 +390,11 @@ export function DashboardApp({ initialData }: { initialData: DashboardData }) {
     ),
     Propostas: (
       <>
-        <Title n="Propostas comerciais" s="Pipeline completo, probabilidades e valores negociados." />
+        <Title
+          n="Propostas comerciais"
+          s="Pipeline completo, probabilidades e valores negociados."
+          action={<CreateButton kind="proposal" onOpen={setModal} />}
+        />
         <div className="metrics three">
           <Metric n="Pipeline total" v={money(pipeline)} s={`${initialData.proposals.length} oportunidades`} I={FileText} />
           <Metric n="Pipeline ponderado" v={money(weighted)} s="Por probabilidade" I={TrendingUp} t="blue" />
@@ -440,7 +430,11 @@ export function DashboardApp({ initialData }: { initialData: DashboardData }) {
     ),
     Projetos: (
       <>
-        <Title n="Projetos em andamento" s="Entregas, prazos, clientes e saúde operacional." />
+        <Title
+          n="Projetos em andamento"
+          s="Entregas, prazos, clientes e saúde operacional."
+          action={<CreateButton kind="project" onOpen={setModal} />}
+        />
         <div className="projectgrid">
           {initialData.projects.map((project) => (
             <article key={project.id}>
@@ -469,7 +463,11 @@ export function DashboardApp({ initialData }: { initialData: DashboardData }) {
     ),
     Equipe: (
       <>
-        <Title n="Equipe e salários" s="Custos, funções e situação dos colaboradores." />
+        <Title
+          n="Equipe e salários"
+          s="Custos, funções e situação dos colaboradores."
+          action={<CreateButton kind="team" onOpen={setModal} />}
+        />
         <div className="metrics three">
           <Metric n="Custo mensal" v={money(teamCost)} s={`${percent(teamCost, revenue)}% da receita`} I={Users} />
           <Metric n="Colaboradores" v={String(initialData.team.length)} s="Todos ativos" I={Check} t="blue" />
@@ -511,7 +509,11 @@ export function DashboardApp({ initialData }: { initialData: DashboardData }) {
     ),
     Clientes: (
       <>
-        <Title n="Clientes e LTV" s="Valor gerado, recorrência e tempo de relacionamento." />
+        <Title
+          n="Clientes e LTV"
+          s="Valor gerado, recorrência e tempo de relacionamento."
+          action={<CreateButton kind="client" onOpen={setModal} />}
+        />
         <div className="metrics three">
           <Metric n="LTV médio" v={money(avgLtv)} s="Base atual" I={CircleDollarSign} />
           <Metric n="MRR contratado" v={money(mrr)} s={`${initialData.clients.length} contratos`} I={TrendingUp} t="blue" />
@@ -608,81 +610,17 @@ export function DashboardApp({ initialData }: { initialData: DashboardData }) {
           <button className="bell">
             <Bell />
           </button>
-          <button className="primary" onClick={() => setModal(true)}>
-            <Plus />
-            Novo lançamento
-          </button>
+          {currentAction ? <CreateButton kind={currentAction} onOpen={setModal} /> : null}
         </header>
         <div className="content">{view[screen]}</div>
       </main>
-      {modal && (
-        <div className="backdrop" onMouseDown={() => setModal(false)}>
-          <section className="modal" onMouseDown={(event) => event.stopPropagation()}>
-            <header>
-              <div>
-                <h2>Novo lançamento</h2>
-                <p>Registre uma entrada ou saída financeira.</p>
-              </div>
-              <button onClick={() => setModal(false)}>
-                <X />
-              </button>
-            </header>
-            <div className="toggle">
-              <button className={type === "income" ? "active" : ""} onClick={() => setType("income")}>
-                <ArrowUpRight />
-                Entrada
-              </button>
-              <button className={type === "expense" ? "active" : ""} onClick={() => setType("expense")}>
-                <ArrowDownRight />
-                Saída
-              </button>
-            </div>
-            <label>
-              Descrição
-              <input
-                placeholder="Ex.: Mensalidade Chatbô"
-                value={description}
-                onChange={(event) => setDescription(event.target.value)}
-              />
-            </label>
-            <div className="formgrid">
-              <label>
-                Valor
-                <input
-                  placeholder="R$ 0,00"
-                  value={amount}
-                  onChange={(event) => setAmount(event.target.value)}
-                />
-              </label>
-              <label>
-                Vencimento
-                <input type="date" value={dueDate} onChange={(event) => setDueDate(event.target.value)} />
-              </label>
-            </div>
-            <label>
-              Categoria
-              <select value={category} onChange={(event) => setCategory(event.target.value)}>
-                <option>Receita recorrente</option>
-                <option>Projeto</option>
-                <option>Equipe</option>
-              </select>
-            </label>
-            <footer>
-              <button onClick={() => setModal(false)}>Cancelar</button>
-              <button className="primary" onClick={save} disabled={saving}>
-                {saved ? (
-                  <>
-                    <Check />
-                    Salvo!
-                  </>
-                ) : (
-                  "Salvar lançamento"
-                )}
-              </button>
-            </footer>
-          </section>
-        </div>
-      )}
+      {modal ? (
+        <CreateRecordModal
+          kind={modal}
+          clients={initialData.clients}
+          onClose={() => setModal(null)}
+        />
+      ) : null}
     </div>
   );
 }
