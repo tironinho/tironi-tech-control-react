@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { apiFail, requireApiUser } from "@/lib/auth";
 import {
   createTransaction,
   deleteTransaction,
@@ -39,12 +40,12 @@ const payloadSchema = z
   );
 
 function fail(error: unknown) {
-  const message = error instanceof Error ? error.message : "Invalid payload";
-  return Response.json({ error: message }, { status: 400 });
+  return apiFail(error);
 }
 
 export async function POST(request: Request) {
   try {
+    await requireApiUser("admin");
     const payload = payloadSchema.parse(await request.json());
     const row = await createTransaction(payload);
     return Response.json({ ok: true, id: row.id });
@@ -55,6 +56,7 @@ export async function POST(request: Request) {
 
 export async function PATCH(request: Request) {
   try {
+    await requireApiUser("admin");
     const id = parseRecordId(new URL(request.url).searchParams.get("id"));
     const payload = payloadSchema.parse(await request.json());
     const row = await updateTransaction(id, payload);
@@ -66,6 +68,7 @@ export async function PATCH(request: Request) {
 
 export async function DELETE(request: Request) {
   try {
+    await requireApiUser("admin");
     const id = parseRecordId(new URL(request.url).searchParams.get("id"));
     await deleteTransaction(id);
     return Response.json({ ok: true });

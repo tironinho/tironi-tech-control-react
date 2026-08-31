@@ -29,6 +29,15 @@ export type DashboardData = {
     name: string;
     role: string;
     monthlyCost: number;
+    sectorId: number | null;
+    sectorName: string;
+    username: string | null;
+    hasLogin: boolean;
+  }[];
+  sectors: {
+    id: number;
+    name: string;
+    slug: string;
   }[];
   projects: {
     id: number;
@@ -38,6 +47,11 @@ export type DashboardData = {
     progress: number;
     dueDate: string;
     status: string;
+    contactName: string;
+    phone: string;
+    notes: string;
+    ownerId: number | null;
+    ownerName: string;
   }[];
   proposals: {
     id: number;
@@ -46,12 +60,26 @@ export type DashboardData = {
     title: string;
     amount: number;
     probability: number;
+    contactName: string;
+    phone: string;
+    notes: string;
+    ownerId: number | null;
+    ownerName: string;
   }[];
   transactions: DashboardTransaction[];
   chart: { month: string; revenue: number; expenses: number }[];
   healthScore: number;
   conversionRate: number;
   valuationMultiple: number;
+};
+
+export type PipelineData = Pick<DashboardData, "clients" | "team" | "sectors" | "projects" | "proposals">;
+
+export type ActivityItem = {
+  id: number;
+  message: string;
+  author: string;
+  createdAt: string;
 };
 
 export function latestMonth(chart: DashboardData["chart"]) {

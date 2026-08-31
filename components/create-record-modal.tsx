@@ -1,10 +1,11 @@
 "use client";
 
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
 import { ArrowDownRight, ArrowUpRight, Check, Plus, X } from "lucide-react";
 import type { DashboardData } from "@/lib/dashboard-types";
 import { addMonths, isRecurringIncome, monthlyDates } from "@/lib/recurrence";
+import { PROJECT_STAGES, PROPOSAL_STAGES } from "@/lib/pipeline";
 
 export type CreateKind = "transaction" | "expense" | "client" | "team" | "project" | "proposal";
 
@@ -24,13 +25,19 @@ export type ModalEdit = {
   startedAt?: string;
   clientName?: string;
   progress?: number;
-  projectStatus?: "on_track" | "at_risk";
+  projectStatus?: string;
   stage?: string;
   title?: string;
   probability?: number;
   monthlyCost?: number;
   endsAt?: string | null;
   seriesId?: string | null;
+  contactName?: string;
+  phone?: string;
+  notes?: string;
+  ownerId?: number | null;
+  sectorId?: number | null;
+  username?: string;
 };
 
 const labels: Record<CreateKind, { title: string; subtitle: string; save: string; header: string }> = {
@@ -90,17 +97,17 @@ const editTitles: Record<CreateKind, { title: string; subtitle: string; save: st
   },
   team: {
     title: "Editar colaborador",
-    subtitle: "Atualize função e custo mensal.",
+    subtitle: "Atualize setor, função, custo e acesso ao sistema.",
     save: "Salvar alterações",
   },
   project: {
     title: "Editar projeto",
-    subtitle: "Atualize prazo, progresso e cliente.",
+    subtitle: "Atualize status, responsável, contato e histórico.",
     save: "Salvar alterações",
   },
   proposal: {
     title: "Editar proposta",
-    subtitle: "Atualize valor, estágio e probabilidade.",
+    subtitle: "Atualize estágio, contato, responsável e histórico.",
     save: "Salvar alterações",
   },
 };
@@ -164,11 +171,15 @@ export function CreateButton({
 export function CreateRecordModal({
   kind,
   clients,
+  team = [],
+  sectors = [],
   edit,
   onClose,
 }: {
   kind: CreateKind;
   clients: DashboardData["clients"];
+  team?: DashboardData["team"];
+  sectors?: DashboardData["sectors"];
   edit?: ModalEdit;
   onClose: () => void;
 }) {
@@ -202,10 +213,35 @@ export function CreateRecordModal({
   const [startedAt, setStartedAt] = useState(edit?.startedAt ?? today);
   const [clientKey, setClientKey] = useState(edit?.clientName ?? clients[0]?.name ?? "Interno");
   const [progress, setProgress] = useState(String(edit?.progress ?? 0));
-  const [status, setStatus] = useState<"on_track" | "at_risk">(edit?.projectStatus ?? "on_track");
+  const [status, setStatus] = useState(edit?.projectStatus ?? "Em andamento");
   const [stage, setStage] = useState(edit?.stage ?? "Diagnóstico");
   const [title, setTitle] = useState(edit?.title ?? "");
   const [probability, setProbability] = useState(String(edit?.probability ?? 30));
+  const [contactName, setContactName] = useState(edit?.contactName ?? "");
+  const [phone, setPhone] = useState(edit?.phone ?? "");
+  const [notes, setNotes] = useState(edit?.notes ?? "");
+  const [ownerId, setOwnerId] = useState(String(edit?.ownerId ?? ""));
+  const [sectorId, setSectorId] = useState(String(edit?.sectorId ?? ""));
+  const [username, setUsername] = useState(edit?.username ?? "");
+  const [password, setPassword] = useState("");
+  const [historyNote, setHistoryNote] = useState("");
+  const [history, setHistory] = useState<{ id: number; message: string; author: string; createdAt: string }[]>([]);
+
+  useEffect(() => {
+    if (!edit || (kind !== "proposal" && kind !== "project")) return;
+    let cancelled = false;
+    fetch(`/api/history?type=${kind}&id=${edit.id}`)
+      .then((response) => response.json())
+      .then((payload: { items?: { id: number; message: string; author: string; createdAt: string }[] }) => {
+        if (!cancelled) setHistory(payload.items ?? []);
+      })
+      .catch(() => {
+        if (!cancelled) setHistory([]);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [edit, kind]);
 
   async function send(method: "POST" | "PATCH", url: string, body: unknown) {
     const response = await fetch(url, {
@@ -260,11 +296,17 @@ export function CreateRecordModal({
       } else if (kind === "team") {
         const parsedCost = parseMoney(amount) || 0;
         if (!name.trim() || !role.trim()) throw new Error("Informe nome e função.");
+        if ((!edit || !edit.username) && username.trim() && !password.trim()) {
+          throw new Error("Informe a senha de acesso do colaborador.");
+        }
         await send(method, url, {
           name: name.trim(),
           initials: initialsFrom(name) || "EQ",
           role: role.trim(),
           monthlyCost: parsedCost,
+          sectorId: Number(sectorId) || null,
+          username: username.trim() || undefined,
+          password: password.trim() || undefined,
         });
       } else if (kind === "project") {
         if (!name.trim()) throw new Error("Informe o nome do projeto.");
@@ -276,6 +318,11 @@ export function CreateRecordModal({
           progress: Number(progress) || 0,
           dueDate,
           status,
+          contactName: contactName.trim(),
+          phone: phone.trim(),
+          notes: notes.trim(),
+          ownerId: Number(ownerId) || null,
+          historyNote: historyNote.trim() || undefined,
         });
       } else {
         const parsed = parseMoney(amount);
@@ -288,6 +335,11 @@ export function CreateRecordModal({
           title: title.trim(),
           amount: parsed,
           probability: Number(probability) || 0,
+          contactName: contactName.trim(),
+          phone: phone.trim(),
+          notes: notes.trim(),
+          ownerId: Number(ownerId) || null,
+          historyNote: historyNote.trim() || undefined,
         });
       }
 
@@ -302,7 +354,7 @@ export function CreateRecordModal({
 
   return (
     <div className="backdrop" onMouseDown={onClose}>
-      <section className="modal" onMouseDown={(event) => event.stopPropagation()}>
+      <section className={"modal" + (kind === "project" || kind === "proposal" ? " wide" : "")} onMouseDown={(event) => event.stopPropagation()}>
         <header>
           <div>
             <h2>{copy.title}</h2>
@@ -511,10 +563,42 @@ export function CreateRecordModal({
               Função
               <input placeholder="Ex.: Desenvolvedor Full Stack" value={role} onChange={(event) => setRole(event.target.value)} />
             </label>
-            <label>
-              Custo mensal
-              <input placeholder="R$ 0,00" value={amount} onChange={(event) => setAmount(event.target.value)} />
-            </label>
+            <div className="formgrid">
+              <label>
+                Setor
+                <select value={sectorId} onChange={(event) => setSectorId(event.target.value)}>
+                  <option value="">Sem setor</option>
+                  {sectors.map((sector) => (
+                    <option key={sector.id} value={sector.id}>
+                      {sector.name}
+                    </option>
+                  ))}
+                </select>
+              </label>
+              <label>
+                Custo mensal
+                <input placeholder="R$ 0,00" value={amount} onChange={(event) => setAmount(event.target.value)} />
+              </label>
+            </div>
+            <div className="formgrid">
+              <label>
+                Login de acesso
+                <input
+                  placeholder="Ex.: joao.pedro"
+                  value={username}
+                  onChange={(event) => setUsername(event.target.value)}
+                />
+              </label>
+              <label>
+                Senha
+                <input
+                  type="password"
+                  placeholder={edit?.username ? "Deixe em branco para manter" : "Senha inicial"}
+                  value={password}
+                  onChange={(event) => setPassword(event.target.value)}
+                />
+              </label>
+            </div>
           </>
         )}
 
@@ -545,11 +629,59 @@ export function CreateRecordModal({
             </div>
             <label>
               Status
-              <select value={status} onChange={(event) => setStatus(event.target.value as "on_track" | "at_risk")}>
-                <option value="on_track">No prazo</option>
-                <option value="at_risk">Atenção</option>
+              <select value={status} onChange={(event) => setStatus(event.target.value)}>
+                {PROJECT_STAGES.map((item) => (
+                  <option key={item}>{item}</option>
+                ))}
               </select>
             </label>
+            <div className="formgrid">
+              <label>
+                Nome do contato
+                <input value={contactName} onChange={(event) => setContactName(event.target.value)} />
+              </label>
+              <label>
+                Telefone
+                <input placeholder="(11) 99999-0000" value={phone} onChange={(event) => setPhone(event.target.value)} />
+              </label>
+            </div>
+            <label>
+              Responsável
+              <select value={ownerId} onChange={(event) => setOwnerId(event.target.value)}>
+                <option value="">Sem responsável</option>
+                {team.map((member) => (
+                  <option key={member.id} value={member.id}>
+                    {member.name}
+                  </option>
+                ))}
+              </select>
+            </label>
+            <label>
+              Informação
+              <textarea value={notes} onChange={(event) => setNotes(event.target.value)} />
+            </label>
+            <label>
+              Registrar no histórico
+              <input
+                placeholder="Ex.: Alinhamento com o cliente nesta semana"
+                value={historyNote}
+                onChange={(event) => setHistoryNote(event.target.value)}
+              />
+            </label>
+            {edit ? (
+              <div className="history">
+                <small>Histórico</small>
+                {history.length ? (
+                  history.map((item) => (
+                    <p key={item.id}>
+                      <b>{item.author}</b> · {item.message}
+                    </p>
+                  ))
+                ) : (
+                  <p>Nenhum movimento registrado ainda.</p>
+                )}
+              </div>
+            ) : null}
           </>
         )}
 
@@ -580,12 +712,58 @@ export function CreateRecordModal({
             <label>
               Estágio
               <select value={stage} onChange={(event) => setStage(event.target.value)}>
-                <option>Diagnóstico</option>
-                <option>Proposta enviada</option>
-                <option>Negociação</option>
-                <option>Aprovada</option>
+                {PROPOSAL_STAGES.map((item) => (
+                  <option key={item}>{item}</option>
+                ))}
               </select>
             </label>
+            <div className="formgrid">
+              <label>
+                Nome do contato
+                <input value={contactName} onChange={(event) => setContactName(event.target.value)} />
+              </label>
+              <label>
+                Telefone
+                <input placeholder="(11) 99999-0000" value={phone} onChange={(event) => setPhone(event.target.value)} />
+              </label>
+            </div>
+            <label>
+              Responsável
+              <select value={ownerId} onChange={(event) => setOwnerId(event.target.value)}>
+                <option value="">Sem responsável</option>
+                {team.map((member) => (
+                  <option key={member.id} value={member.id}>
+                    {member.name}
+                  </option>
+                ))}
+              </select>
+            </label>
+            <label>
+              Informação
+              <textarea value={notes} onChange={(event) => setNotes(event.target.value)} />
+            </label>
+            <label>
+              Registrar no histórico
+              <input
+                placeholder="Ex.: Cliente pediu ajuste no escopo"
+                value={historyNote}
+                onChange={(event) => setHistoryNote(event.target.value)}
+              />
+            </label>
+            {edit ? (
+              <div className="history">
+                <small>Histórico</small>
+                {history.length ? (
+                  history.map((item) => (
+                    <p key={item.id}>
+                      <b>{item.author}</b> · {item.message}
+                    </p>
+                  ))
+                ) : (
+                  <p>Nenhum movimento registrado ainda.</p>
+                )}
+              </div>
+            ) : null}
           </>
         )}
 

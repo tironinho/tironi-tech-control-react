@@ -25,10 +25,10 @@ import {
   FileText,
   FolderKanban,
   LayoutDashboard,
+  LogOut,
   Menu,
   ReceiptText,
   Search,
-  Settings,
   Target,
   TrendingUp,
   Users,
@@ -39,7 +39,9 @@ import type { DashboardData } from "@/lib/dashboard-types";
 import { formatDueDate, money, monthLabel } from "@/lib/money";
 import { addMonths, monthKey, monthStart } from "@/lib/recurrence";
 import { CreateButton, CreateRecordModal, type CreateKind, type ModalEdit } from "@/components/create-record-modal";
+import { KanbanBoard } from "@/components/kanban-board";
 import { ConfirmDelete, RecordTools } from "@/components/record-tools";
+import { PROJECT_STAGES, PROPOSAL_STAGES } from "@/lib/pipeline";
 
 type Screen =
   | "Visão geral"
@@ -64,8 +66,6 @@ const nav = [
   ["Valuation", TrendingUp],
 ] as const;
 
-const stages = ["Diagnóstico", "Proposta enviada", "Negociação", "Aprovada"] as const;
-
 function percent(part: number, total: number) {
   if (!total) return 0;
   return Math.round((part / total) * 100);
@@ -76,13 +76,14 @@ function statusLabel(status: string) {
   if (status === "expected") return "Previsto";
   if (status === "payable") return "A pagar";
   if (status === "paid") return "Pago";
-  if (status === "at_risk") return "Atenção";
-  return "No prazo";
+  if (status === "at_risk" || status === "Atenção") return "Atenção";
+  if (status === "on_track") return "No prazo";
+  return status;
 }
 
 function statusTone(status: string) {
   if (status === "expected") return "blue";
-  if (status === "payable" || status === "at_risk") return "amber";
+  if (status === "payable" || status === "at_risk" || status === "Atenção") return "amber";
   return "";
 }
 
@@ -201,7 +202,13 @@ function Graph({ chart }: { chart: DashboardData["chart"] }) {
   );
 }
 
-export function DashboardApp({ initialData }: { initialData: DashboardData }) {
+export function DashboardApp({
+  initialData,
+  userName,
+}: {
+  initialData: DashboardData;
+  userName: string;
+}) {
   const router = useRouter();
   const [screen, setScreen] = useState<Screen>("Visão geral");
   const [menu, setMenu] = useState(false);
@@ -214,9 +221,54 @@ export function DashboardApp({ initialData }: { initialData: DashboardData }) {
   } | null>(null);
   const [deleting, setDeleting] = useState(false);
   const [deleteError, setDeleteError] = useState("");
+  const [moves, setMoves] = useState<Record<string, string>>({});
+  const [sectorName, setSectorName] = useState("");
+  const [sectorError, setSectorError] = useState("");
+
+  async function logout() {
+    await fetch("/api/logout", { method: "POST" });
+    router.replace("/login");
+    router.refresh();
+  }
 
   function openCreate(kind: CreateKind) {
     setModal({ kind });
+  }
+
+  async function moveCard(kind: "proposal" | "project", id: number, column: string) {
+    const key = `${kind}-${id}`;
+    setMoves((current) => ({ ...current, [key]: column }));
+    const path = kind === "proposal" ? "/api/proposals" : "/api/projects";
+    const body = kind === "proposal" ? { stage: column } : { status: column };
+    const response = await fetch(`${path}?id=${id}`, {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(body),
+    });
+    if (!response.ok) {
+      setMoves((current) => {
+        const next = { ...current };
+        delete next[key];
+        return next;
+      });
+    }
+    router.refresh();
+  }
+
+  async function saveSector() {
+    setSectorError("");
+    const response = await fetch("/api/sectors", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ name: sectorName }),
+    });
+    const payload = (await response.json()) as { error?: string };
+    if (!response.ok) {
+      setSectorError(payload.error ?? "Não foi possível criar o setor.");
+      return;
+    }
+    setSectorName("");
+    router.refresh();
   }
 
   async function confirmDelete() {
@@ -267,6 +319,14 @@ export function DashboardApp({ initialData }: { initialData: DashboardData }) {
     (sum, item) => sum + (item.amount * item.probability) / 100,
     0,
   );
+  const proposals = initialData.proposals.map((item) => ({
+    ...item,
+    stage: moves[`proposal-${item.id}`] ?? item.stage,
+  }));
+  const projects = initialData.projects.map((item) => ({
+    ...item,
+    status: moves[`project-${item.id}`] ?? item.status,
+  }));
   const nextMonth = addMonths(today, 1);
   const incomeRows = initialData.transactions.filter((item) => item.type === "income");
   const expenseRows = initialData.transactions.filter((item) => item.type === "expense");
@@ -606,7 +666,7 @@ export function DashboardApp({ initialData }: { initialData: DashboardData }) {
       <>
         <Title
           n="Propostas comerciais"
-          s="Pipeline completo, probabilidades e valores negociados."
+          s="Arraste os cards entre estágios. Histórico, contato e responsável ficam na edição."
           action={<CreateButton kind="proposal" onOpen={openCreate} />}
         />
         <div className="metrics three">
@@ -614,111 +674,106 @@ export function DashboardApp({ initialData }: { initialData: DashboardData }) {
           <Metric n="Pipeline ponderado" v={money(weighted)} s="Por probabilidade" I={TrendingUp} t="blue" />
           <Metric n="Conversão" v={`${initialData.conversionRate}%`} s="Últimos 90 dias" I={Target} t="violet" />
         </div>
-        <div className="kanban">
-          {stages.map((stage) => (
-            <section key={stage}>
-              <header>
-                {stage}
-                <b>{initialData.proposals.filter((item) => item.stage === stage).length}</b>
-              </header>
-              {initialData.proposals
-                .filter((item) => item.stage === stage)
-                .map((item) => (
-                  <article key={item.id}>
-                    <small>{item.clientName}</small>
-                    <RecordTools
-                      onEdit={() =>
-                        setModal({
-                          kind: "proposal",
-                          edit: {
-                            id: item.id,
-                            clientName: item.clientName,
-                            title: item.title,
-                            amount: item.amount,
-                            probability: item.probability,
-                            stage: item.stage,
-                          },
-                        })
-                      }
-                      onDelete={() => {
-                        setDeleteError("");
-                        setPendingDelete({ kind: "proposal", id: item.id, label: item.title });
-                      }}
-                    />
-                    <h3>{item.title}</h3>
-                    <strong>{money(item.amount)}</strong>
-                    <footer>
-                      {item.probability}% de chance
-                      <div>
-                        <i style={{ width: item.probability + "%" }} />
-                      </div>
-                    </footer>
-                  </article>
-                ))}
-            </section>
-          ))}
-        </div>
+        <KanbanBoard
+          columns={PROPOSAL_STAGES}
+          items={proposals}
+          columnOf={(item) => item.stage}
+          onMove={(id, column) => moveCard("proposal", id, column)}
+          renderCard={(item) => (
+            <>
+              <small>{item.clientName}</small>
+              <RecordTools
+                onEdit={() =>
+                  setModal({
+                    kind: "proposal",
+                    edit: {
+                      id: item.id,
+                      clientName: item.clientName,
+                      title: item.title,
+                      amount: item.amount,
+                      probability: item.probability,
+                      stage: item.stage,
+                      contactName: item.contactName,
+                      phone: item.phone,
+                      notes: item.notes,
+                      ownerId: item.ownerId,
+                    },
+                  })
+                }
+                onDelete={() => {
+                  setDeleteError("");
+                  setPendingDelete({ kind: "proposal", id: item.id, label: item.title });
+                }}
+              />
+              <h3>{item.title}</h3>
+              <strong>{money(item.amount)}</strong>
+              <footer>
+                {item.ownerName ? `Resp.: ${item.ownerName}` : `${item.probability}% de chance`}
+                <div>
+                  <i style={{ width: item.probability + "%" }} />
+                </div>
+              </footer>
+            </>
+          )}
+        />
       </>
     ),
     Projetos: (
       <>
         <Title
           n="Projetos em andamento"
-          s="Entregas, prazos, clientes e saúde operacional."
+          s="Arraste os cards entre status. Atribua o responsável e acompanhe o histórico."
           action={<CreateButton kind="project" onOpen={openCreate} />}
         />
-        <div className="projectgrid">
-          {initialData.projects.map((project) => (
-            <article key={project.id}>
-              <header>
-                <i>
-                  <FolderKanban />
-                </i>
-                <div className="card-tools">
-                  <Status t={statusTone(project.status)}>{statusLabel(project.status)}</Status>
-                  <RecordTools
-                    onEdit={() =>
-                      setModal({
-                        kind: "project",
-                        edit: {
-                          id: project.id,
-                          name: project.name,
-                          clientName: project.clientName,
-                          progress: project.progress,
-                          dueDate: project.dueDate,
-                          projectStatus: project.status === "at_risk" ? "at_risk" : "on_track",
-                        },
-                      })
-                    }
-                    onDelete={() => {
-                      setDeleteError("");
-                      setPendingDelete({ kind: "project", id: project.id, label: project.name });
-                    }}
-                  />
-                </div>
-              </header>
-              <small>{project.clientName}</small>
-              <h3>{project.name}</h3>
-              <span>
-                Prazo: {formatDueDate(project.dueDate)}
-                <b>{project.progress}%</b>
-              </span>
-              <div className="progress">
-                <i style={{ width: project.progress + "%" }} />
-              </div>
+        <KanbanBoard
+          columns={PROJECT_STAGES}
+          items={projects}
+          columnOf={(item) => item.status}
+          onMove={(id, column) => moveCard("project", id, column)}
+          renderCard={(item) => (
+            <>
+              <small>{item.clientName}</small>
+              <RecordTools
+                onEdit={() =>
+                  setModal({
+                    kind: "project",
+                    edit: {
+                      id: item.id,
+                      name: item.name,
+                      clientName: item.clientName,
+                      progress: item.progress,
+                      dueDate: item.dueDate,
+                      projectStatus: item.status,
+                      contactName: item.contactName,
+                      phone: item.phone,
+                      notes: item.notes,
+                      ownerId: item.ownerId,
+                    },
+                  })
+                }
+                onDelete={() => {
+                  setDeleteError("");
+                  setPendingDelete({ kind: "project", id: item.id, label: item.name });
+                }}
+              />
+              <h3>{item.name}</h3>
+              <strong>{item.progress}%</strong>
               <footer>
-                Equipe <b>{initialData.team.map((member) => member.initials).join("  ")}</b>
+                {item.ownerName ? `Resp.: ${item.ownerName}` : `Prazo: ${formatDueDate(item.dueDate)}`}
+                <div>
+                  <i style={{ width: item.progress + "%" }} />
+                </div>
               </footer>
-            </article>
-          ))}
-        </div>
+            </>
+          )}
+        />
       </>
     ),
     Equipe: (
       <>
         <Title
           n="Equipe e salários"
-          s="Custos, funções e situação dos colaboradores."
+          s="Cadastre setores, atribua cada colaborador e crie o login de acesso."
           action={<CreateButton kind="team" onOpen={openCreate} />}
         />
         <div className="metrics three">
@@ -732,13 +787,53 @@ export function DashboardApp({ initialData }: { initialData: DashboardData }) {
             t="violet"
           />
         </div>
+        <div className="grid">
+          <section className="panel">
+            <Head n="Setores" s="Cadastro usado para atribuir o time e o acesso" />
+            {initialData.sectors.map((sector) => (
+              <div className="item" key={sector.id}>
+                <i>{sector.name.slice(0, 2).toUpperCase()}</i>
+                <span>
+                  <b>{sector.name}</b>
+                  <small>{sector.slug === "comercial" ? "/comercial" : sector.slug === "desenvolvimento" ? "/desenvolvimento" : sector.slug}</small>
+                </span>
+              </div>
+            ))}
+            <label className="inline-field">
+              Novo setor
+              <input
+                placeholder="Ex.: Design"
+                value={sectorName}
+                onChange={(event) => setSectorName(event.target.value)}
+              />
+            </label>
+            {sectorError ? <p className="note">{sectorError}</p> : null}
+            <button className="primary" type="button" onClick={saveSector}>
+              Cadastrar setor
+            </button>
+          </section>
+          <section className="panel">
+            <Head n="Acessos" s="Login criado no cadastro do colaborador" />
+            {initialData.team.map((member) => (
+              <div className="item" key={member.id}>
+                <i>{member.initials}</i>
+                <span>
+                  <b>{member.name}</b>
+                  <small>
+                    {member.hasLogin ? member.username : "Sem login"} · {member.sectorName}
+                  </small>
+                </span>
+              </div>
+            ))}
+          </section>
+        </div>
         <section className="panel">
-          <Head n="Colaboradores" s="Folha e informações principais" />
+          <Head n="Colaboradores" s="Folha, setor e acesso" />
           <div className="table">
             <div className="row team th">
               <span>Colaborador</span>
               <span>Função</span>
-              <span>Status</span>
+              <span>Setor</span>
               <span>Custo mensal</span>
               <span />
             </div>
@@ -749,9 +844,7 @@ export function DashboardApp({ initialData }: { initialData: DashboardData }) {
                   <b>{member.name}</b>
                 </span>
                 <span>{member.role}</span>
-                <span>
-                  <Status>Ativo</Status>
-                </span>
+                <span>{member.sectorName}</span>
                 <b>{money(member.monthlyCost)}</b>
                 <RecordTools
                   onEdit={() =>
@@ -762,6 +855,8 @@ export function DashboardApp({ initialData }: { initialData: DashboardData }) {
                         name: member.name,
                         role: member.role,
                         monthlyCost: member.monthlyCost,
+                        sectorId: member.sectorId,
+                        username: member.username ?? "",
                       },
                     })
                   }
@@ -867,14 +962,14 @@ export function DashboardApp({ initialData }: { initialData: DashboardData }) {
           ))}
         </nav>
         <div className="bottom">
-          <button>
-            <Settings />
-            Configurações
+          <button type="button" onClick={logout}>
+            <LogOut />
+            Sair
           </button>
           <div>
             <i>PT</i>
             <span>
-              <b>Paulo Tironi</b>
+              <b>{userName}</b>
               <small>Administrador</small>
             </span>
           </div>
@@ -905,6 +1000,8 @@ export function DashboardApp({ initialData }: { initialData: DashboardData }) {
         <CreateRecordModal
           kind={modal.kind}
           clients={initialData.clients}
+          team={initialData.team}
+          sectors={initialData.sectors}
           edit={modal.edit}
           onClose={() => setModal(null)}
         />
