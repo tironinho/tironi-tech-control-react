@@ -625,9 +625,9 @@ export function DashboardApp({
         <div className="grid">
           <section className="panel">
             <Head n="Próximos recebimentos" s="Valores previstos para entrar" />
-            {incomeRows.filter((item) => item.dueDate >= today).slice(0, 5).length ? (
+            {incomeRows.filter((item) => item.dueDate >= today && item.status !== "paid").slice(0, 5).length ? (
               incomeRows
-                .filter((item) => item.dueDate >= today)
+                .filter((item) => item.dueDate >= today && item.status !== "paid")
                 .slice(0, 5)
                 .map((item) => (
                   <div className="item" key={item.id}>
