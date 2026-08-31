@@ -10,7 +10,7 @@ export type CreateKind = "transaction" | "client" | "team" | "project" | "propos
 const labels: Record<CreateKind, { title: string; subtitle: string; save: string; header: string }> = {
   transaction: {
     title: "Novo lançamento",
-    subtitle: "Registre uma entrada ou saída financeira.",
+    subtitle: "Informe o valor e de qual cliente vem a receita.",
     save: "Salvar lançamento",
     header: "Novo lançamento",
   },
@@ -89,6 +89,9 @@ export function CreateRecordModal({
   const [amount, setAmount] = useState("");
   const [dueDate, setDueDate] = useState(today);
   const [category, setCategory] = useState("Receita recorrente");
+  const [transactionClientId, setTransactionClientId] = useState(
+    String(clients[0]?.id ?? ""),
+  );
   const [name, setName] = useState("");
   const [role, setRole] = useState("");
   const [mrr, setMrr] = useState("");
@@ -117,10 +120,14 @@ export function CreateRecordModal({
     try {
       if (kind === "transaction") {
         const parsed = parseMoney(amount);
+        const selectedClientId = Number(transactionClientId) || null;
         if (!description.trim() || !parsed) throw new Error("Preencha descrição e valor.");
+        if (type === "income" && !selectedClientId) {
+          throw new Error("Selecione o cliente da receita.");
+        }
         await post("/api/transactions", {
           description: description.trim(),
-          counterparty: description.trim(),
+          clientId: selectedClientId,
           category,
           type,
           amount: parsed,
@@ -196,19 +203,51 @@ export function CreateRecordModal({
         {kind === "transaction" && (
           <>
             <div className="toggle">
-              <button className={type === "income" ? "active" : ""} onClick={() => setType("income")}>
+              <button
+                className={type === "income" ? "active" : ""}
+                type="button"
+                onClick={() => {
+                  setType("income");
+                  if (!transactionClientId && clients[0]) setTransactionClientId(String(clients[0].id));
+                  if (category === "Equipe") setCategory("Receita recorrente");
+                }}
+              >
                 <ArrowUpRight />
                 Entrada
               </button>
-              <button className={type === "expense" ? "active" : ""} onClick={() => setType("expense")}>
+              <button
+                className={type === "expense" ? "active" : ""}
+                type="button"
+                onClick={() => {
+                  setType("expense");
+                  if (category === "Receita recorrente") setCategory("Equipe");
+                }}
+              >
                 <ArrowDownRight />
                 Saída
               </button>
             </div>
             <label>
+              {type === "income" ? "Cliente da receita" : "Cliente (opcional)"}
+              <select
+                value={transactionClientId}
+                onChange={(event) => setTransactionClientId(event.target.value)}
+              >
+                {type === "expense" ? <option value="">Sem cliente</option> : null}
+                {type === "income" && !clients.length ? (
+                  <option value="">Cadastre um cliente primeiro</option>
+                ) : null}
+                {clients.map((client) => (
+                  <option key={client.id} value={client.id}>
+                    {client.name}
+                  </option>
+                ))}
+              </select>
+            </label>
+            <label>
               Descrição
               <input
-                placeholder="Ex.: Mensalidade Chatbô"
+                placeholder={type === "income" ? "Ex.: Mensalidade Chatbô" : "Ex.: Folha de pagamento"}
                 value={description}
                 onChange={(event) => setDescription(event.target.value)}
               />
@@ -226,9 +265,17 @@ export function CreateRecordModal({
             <label>
               Categoria
               <select value={category} onChange={(event) => setCategory(event.target.value)}>
-                <option>Receita recorrente</option>
-                <option>Projeto</option>
-                <option>Equipe</option>
+                {type === "income" ? (
+                  <>
+                    <option>Receita recorrente</option>
+                    <option>Projeto</option>
+                  </>
+                ) : (
+                  <>
+                    <option>Equipe</option>
+                    <option>Projeto</option>
+                  </>
+                )}
               </select>
             </label>
           </>

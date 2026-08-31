@@ -1,14 +1,19 @@
 import { z } from "zod";
 import { createTransaction } from "@/lib/dashboard";
 
-const payloadSchema = z.object({
-  description: z.string().trim().min(2).max(200),
-  counterparty: z.string().trim().min(2).max(200),
-  category: z.enum(["Receita recorrente", "Projeto", "Equipe"]),
-  type: z.enum(["income", "expense"]),
-  amount: z.number().positive(),
-  dueDate: z.string().regex(/^\d{4}-\d{2}-\d{2}$/),
-});
+const payloadSchema = z
+  .object({
+    description: z.string().trim().min(2).max(200),
+    clientId: z.number().int().positive().nullable(),
+    category: z.enum(["Receita recorrente", "Projeto", "Equipe"]),
+    type: z.enum(["income", "expense"]),
+    amount: z.number().positive(),
+    dueDate: z.string().regex(/^\d{4}-\d{2}-\d{2}$/),
+  })
+  .refine((payload) => payload.type !== "income" || payload.clientId != null, {
+    message: "Selecione o cliente da receita.",
+    path: ["clientId"],
+  });
 
 export async function POST(request: Request) {
   try {

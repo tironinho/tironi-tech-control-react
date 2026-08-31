@@ -77,6 +77,7 @@ export async function getDashboardData(): Promise<DashboardData> {
       id: Number(row.id),
       description: row.description,
       counterparty: row.counterparty,
+      clientId: row.client_id == null ? null : Number(row.client_id),
       category: row.category,
       type: row.type as "income" | "expense",
       amount: toNumber(row.amount),
@@ -96,18 +97,36 @@ export async function getDashboardData(): Promise<DashboardData> {
 
 export async function createTransaction(input: {
   description: string;
-  counterparty: string;
+  clientId: number | null;
   category: string;
   type: "income" | "expense";
   amount: number;
   dueDate: string;
 }) {
+  if (input.type === "income" && !input.clientId) {
+    throw new Error("Selecione o cliente da receita.");
+  }
+
   const supabase = getSupabase();
+  let counterparty = input.description;
+
+  if (input.clientId) {
+    const { data: client, error: clientError } = await supabase
+      .from("clients")
+      .select("id, name")
+      .eq("id", input.clientId)
+      .single();
+    throwIfError(clientError, "clients");
+    if (!client) throw new Error("Cliente não encontrado.");
+    counterparty = client.name;
+  }
+
   const { data, error } = await supabase
     .from("transactions")
     .insert({
       description: input.description,
-      counterparty: input.counterparty,
+      counterparty,
+      client_id: input.clientId,
       category: input.category,
       type: input.type,
       amount: input.amount.toFixed(2),

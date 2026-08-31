@@ -361,6 +361,7 @@ export function DashboardApp({ initialData }: { initialData: DashboardData }) {
           <Head n="Agenda financeira" s="Setembro de 2026" />
           <div className="table">
             <div className="row th">
+              <span>Cliente</span>
               <span>Descrição</span>
               <span>Vencimento</span>
               <span>Categoria</span>
@@ -370,9 +371,9 @@ export function DashboardApp({ initialData }: { initialData: DashboardData }) {
             {initialData.transactions.map((item) => (
               <div className="row" key={item.id}>
                 <span>
-                  <b>{item.counterparty}</b>
-                  <small>{item.description}</small>
+                  <b>{item.clientId ? item.counterparty : "—"}</b>
                 </span>
+                <span>{item.description}</span>
                 <span>{formatDueDate(item.dueDate)}</span>
                 <span>{item.category}</span>
                 <span>

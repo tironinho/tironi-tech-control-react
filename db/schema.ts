@@ -65,6 +65,9 @@ export const transactions = tironiTech.table(
     id: bigint("id", { mode: "number" }).generatedAlwaysAsIdentity().primaryKey(),
     description: text("description").notNull(),
     counterparty: text("counterparty").notNull(),
+    clientId: bigint("client_id", { mode: "number" }).references(() => clients.id, {
+      onDelete: "set null",
+    }),
     category: text("category").notNull(),
     type: text("type").notNull(),
     amount: numeric("amount", { precision: 12, scale: 2 }).notNull(),
@@ -75,6 +78,7 @@ export const transactions = tironiTech.table(
   (table) => [
     index("transactions_due_date_idx").on(table.dueDate),
     index("transactions_type_idx").on(table.type),
+    index("transactions_client_id_idx").on(table.clientId),
   ],
 );
 

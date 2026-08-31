@@ -2,6 +2,7 @@ export type DashboardTransaction = {
   id: number;
   description: string;
   counterparty: string;
+  clientId: number | null;
   category: string;
   type: "income" | "expense";
   amount: number;
