@@ -19,6 +19,13 @@ export function monthLabel(isoDate: string) {
     .slice(0, 3);
 }
 
+export function monthLongLabel(isoDate: string) {
+  const date = new Date(`${isoDate}T00:00:00`);
+  const month = new Intl.DateTimeFormat("pt-BR", { month: "long" }).format(date);
+  const year = new Intl.DateTimeFormat("pt-BR", { year: "numeric" }).format(date);
+  return `${month.replace(/^\w/, (letter) => letter.toUpperCase())} de ${year}`;
+}
+
 export function formatDueDate(isoDate: string) {
   const date = new Date(`${isoDate}T00:00:00`);
   const day = new Intl.DateTimeFormat("pt-BR", { day: "2-digit" }).format(date);

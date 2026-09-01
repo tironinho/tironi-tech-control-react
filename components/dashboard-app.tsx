@@ -1,6 +1,6 @@
 "use client";
 
-import { useMemo, useState } from "react";
+import { createContext, useContext, useEffect, useMemo, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
 import {
   Area,
@@ -36,7 +36,7 @@ import {
   X,
 } from "lucide-react";
 import type { DashboardData } from "@/lib/dashboard-types";
-import { formatDueDate, money, monthLabel } from "@/lib/money";
+import { formatDueDate, money, monthLabel, monthLongLabel } from "@/lib/money";
 import { addMonths, monthKey, monthStart } from "@/lib/recurrence";
 import { CreateButton, CreateRecordModal, type CreateKind, type ModalEdit } from "@/components/create-record-modal";
 import { KanbanBoard } from "@/components/kanban-board";
@@ -129,7 +129,108 @@ function Metric({
   );
 }
 
+const MonthFilterContext = createContext<{
+  month: string;
+  months: string[];
+  onChange: (month: string) => void;
+} | null>(null);
+
+function buildMonthChoices(chart: DashboardData["chart"], selected: string, today: string) {
+  const keys = new Set<string>([selected, monthKey(today)]);
+  for (const row of chart) keys.add(monthKey(row.month));
+  const sorted = [...keys].sort();
+  const start = monthKey(addMonths(`${sorted[0]}-01`, -6));
+  const end = monthKey(addMonths(`${sorted.at(-1)}-01`, 6));
+  const months: string[] = [];
+  let cursor = start;
+  while (cursor <= end && months.length < 72) {
+    months.push(cursor);
+    cursor = monthKey(addMonths(`${cursor}-01`, 1));
+  }
+  if (!months.includes(selected)) months.push(selected);
+  return months.sort();
+}
+
+function MonthPicker({
+  value,
+  months,
+  onChange,
+}: {
+  value: string;
+  months: string[];
+  onChange: (month: string) => void;
+}) {
+  const [open, setOpen] = useState(false);
+  const root = useRef<HTMLDivElement>(null);
+  const groups = months.reduce<{ year: string; months: string[] }[]>((list, key) => {
+    const year = key.slice(0, 4);
+    const last = list.at(-1);
+    if (!last || last.year !== year) list.push({ year, months: [key] });
+    else last.months.push(key);
+    return list;
+  }, []);
+
+  useEffect(() => {
+    if (!open) return;
+    function close(event: MouseEvent) {
+      if (!root.current?.contains(event.target as Node)) setOpen(false);
+    }
+    function onKey(event: KeyboardEvent) {
+      if (event.key === "Escape") setOpen(false);
+    }
+    document.addEventListener("mousedown", close);
+    document.addEventListener("keydown", onKey);
+    root.current?.querySelector("[aria-selected='true']")?.scrollIntoView({ block: "nearest" });
+    return () => {
+      document.removeEventListener("mousedown", close);
+      document.removeEventListener("keydown", onKey);
+    };
+  }, [open]);
+
+  return (
+    <div className="month-picker" ref={root}>
+      <button
+        type="button"
+        aria-haspopup="listbox"
+        aria-expanded={open}
+        aria-label="Selecionar mês"
+        onClick={() => setOpen((current) => !current)}
+      >
+        <CalendarDays size={16} />
+        {monthLongLabel(`${value}-01`)}
+        <ChevronDown size={15} />
+      </button>
+      {open ? (
+        <div className="month-menu" role="listbox">
+          {groups.map((group) => (
+            <div key={group.year}>
+              <small>{group.year}</small>
+              {group.months.map((key) => (
+                <button
+                  key={key}
+                  type="button"
+                  role="option"
+                  aria-selected={key === value}
+                  className={key === value ? "active" : undefined}
+                  onClick={() => {
+                    onChange(key);
+                    setOpen(false);
+                  }}
+                >
+                  {monthLongLabel(`${key}-01`)}
+                  {key === value ? <Check size={14} /> : null}
+                </button>
+              ))}
+            </div>
+          ))}
+        </div>
+      ) : null}
+    </div>
+  );
+}
+
 function Title({ n, s, action }: { n: string; s: string; action?: React.ReactNode }) {
+  const monthFilter = useContext(MonthFilterContext);
   return (
     <div className="title">
       <div>
@@ -138,11 +239,9 @@ function Title({ n, s, action }: { n: string; s: string; action?: React.ReactNod
       </div>
       <div className="title-actions">
         {action}
-        <button type="button">
-          <CalendarDays size={16} />
-          Agosto de 2026
-          <ChevronDown size={15} />
-        </button>
+        {monthFilter ? (
+          <MonthPicker value={monthFilter.month} months={monthFilter.months} onChange={monthFilter.onChange} />
+        ) : null}
       </div>
     </div>
   );
@@ -307,10 +406,21 @@ function MonthLedger({
 }
 
 function sliceChart(chart: DashboardData["chart"], fromKey: string, toKey: string) {
-  return chart.filter((row) => {
-    const key = monthKey(row.month);
-    return key >= fromKey && key <= toKey;
-  });
+  const byMonth = new Map(chart.map((row) => [monthKey(row.month), row]));
+  const rows: DashboardData["chart"] = [];
+  if (!fromKey || !toKey || fromKey > toKey) return rows;
+  let cursor = fromKey;
+  for (let i = 0; i < 48 && cursor <= toKey; i += 1) {
+    rows.push(
+      byMonth.get(cursor) ?? {
+        month: `${cursor}-01`,
+        revenue: 0,
+        expenses: 0,
+      },
+    );
+    cursor = monthKey(addMonths(`${cursor}-01`, 1));
+  }
+  return rows;
 }
 
 export function DashboardApp({
@@ -411,13 +521,10 @@ export function DashboardApp({
   }
 
   const today = new Date().toISOString().slice(0, 10);
-  const thisMonth = monthKey(today);
   const orderedChart = [...initialData.chart].sort((a, b) => a.month.localeCompare(b.month));
-  const current =
-    orderedChart.find((row) => monthKey(row.month) === thisMonth) ??
-    orderedChart.filter((row) => monthKey(row.month) <= thisMonth).at(-1) ??
-    null;
-  const previous = orderedChart.filter((row) => monthKey(row.month) < thisMonth).at(-1) ?? null;
+  const monthChoices = buildMonthChoices(orderedChart, selectedMonth, today);
+  const current = orderedChart.find((row) => monthKey(row.month) === selectedMonth) ?? null;
+  const previous = orderedChart.filter((row) => monthKey(row.month) < selectedMonth).at(-1) ?? null;
   const revenue = current?.revenue ?? 0;
   const expenses = current?.expenses ?? 0;
   const net = revenue - expenses;
@@ -455,7 +562,6 @@ export function DashboardApp({
     ...item,
     status: moves[`project-${item.id}`] ?? item.status,
   }));
-  const nextMonth = addMonths(today, 1);
   const incomeRows = initialData.transactions.filter((item) => item.type === "income");
   const expenseRows = initialData.transactions.filter((item) => item.type === "expense");
   const guaranteed = incomeRows
@@ -482,9 +588,9 @@ export function DashboardApp({
     .reduce((sum, item) => sum + item.amount, 0);
   const openReceivablesCount = incomeRows.filter((item) => item.status !== "paid").length;
   const paidThisMonth = incomeRows
-    .filter((item) => monthKey(item.dueDate) === thisMonth && item.status === "paid")
+    .filter((item) => monthKey(item.dueDate) === selectedMonth && item.status === "paid")
     .reduce((sum, item) => sum + item.amount, 0);
-  const nextMonthKey = monthKey(nextMonth);
+  const nextMonthKey = monthKey(addMonths(`${selectedMonth}-01`, 1));
   const nextMonthRevenue =
     orderedChart.find((row) => monthKey(row.month) === nextMonthKey)?.revenue ??
     incomeRows
@@ -496,11 +602,13 @@ export function DashboardApp({
       .filter((item) => monthKey(item.dueDate) === nextMonthKey)
       .reduce((sum, item) => sum + item.amount, 0);
   const recurringIncomeMonthly = incomeRows
-    .filter((item) => item.category === "Receita recorrente" && monthKey(item.dueDate) === thisMonth)
+    .filter((item) => item.category === "Receita recorrente" && monthKey(item.dueDate) === selectedMonth)
     .reduce((sum, item) => sum + item.amount, 0);
-  const overdueIncome = incomeRows
-    .filter((item) => item.status !== "paid" && item.dueDate < today)
-    .reduce((sum, item) => sum + item.amount, 0);
+  const monthIncomeRows = incomeRows.filter((item) => monthKey(item.dueDate) === selectedMonth);
+  const monthExpenseRows = expenseRows.filter((item) => monthKey(item.dueDate) === selectedMonth);
+  const monthOpenReceivables = monthIncomeRows.filter((item) => item.status !== "paid");
+  const monthUnpaidExpenses = monthExpenseRows.filter((item) => item.status !== "paid");
+  const monthOverdueIncome = monthIncomeRows.filter((item) => item.status !== "paid" && item.dueDate < today);
   const clientRevenue = [...incomeRows.reduce((map, item) => {
     const key = item.counterparty || "Sem cliente";
     map.set(key, (map.get(key) ?? 0) + item.amount);
@@ -519,20 +627,20 @@ export function DashboardApp({
     .sort((a, b) => b.amount - a.amount);
   const overviewChart = sliceChart(
     orderedChart,
-    monthKey(addMonths(today, -2)),
-    monthKey(addMonths(today, 5)),
+    monthKey(addMonths(`${selectedMonth}-01`, -2)),
+    monthKey(addMonths(`${selectedMonth}-01`, 5)),
   );
   const financeChart = sliceChart(
     orderedChart,
-    monthKey(addMonths(today, -3)),
-    monthKey(addMonths(today, 11)),
+    monthKey(addMonths(`${selectedMonth}-01`, -3)),
+    monthKey(addMonths(`${selectedMonth}-01`, 11)),
   );
   const avgLtv = initialData.clients.length
     ? initialData.clients.reduce((sum, client) => sum + client.ltv, 0) / initialData.clients.length
     : 0;
   const annualized = revenue * 12;
   const recurringAnnual = mrr * 12;
-  const monthTitle = `${monthLabel(`${thisMonth}-01`)} ${thisMonth.slice(0, 4)}`;
+  const monthTitle = monthLongLabel(`${selectedMonth}-01`);
 
   const metrics = (
     <div className="metrics">
@@ -598,10 +706,27 @@ export function DashboardApp({
         />
         {metrics}
         <div className="metrics">
-          <Metric n="A receber" v={money(openReceivables)} s={`${openReceivablesCount} lançamentos abertos`} I={ReceiptText} />
-          <Metric n="Em atraso" v={money(overdueIncome)} s="Receitas vencidas sem pagamento" I={Target} t="amber" />
+          <Metric
+            n="A receber"
+            v={money(monthOpenReceivables.reduce((sum, item) => sum + item.amount, 0))}
+            s={`${monthOpenReceivables.length} lançamentos abertos no mês`}
+            I={ReceiptText}
+          />
+          <Metric
+            n="Em atraso"
+            v={money(monthOverdueIncome.reduce((sum, item) => sum + item.amount, 0))}
+            s="Receitas vencidas sem pagamento neste mês"
+            I={Target}
+            t="amber"
+          />
           <Metric n="MRR / recorrente no mês" v={money(Math.max(mrr, recurringIncomeMonthly))} s="Receita contratada mensal" I={TrendingUp} t="blue" />
-          <Metric n="A pagar" v={money(unpaidExpenses)} s="Despesas ainda em aberto" I={Banknote} t="violet" />
+          <Metric
+            n="A pagar"
+            v={money(monthUnpaidExpenses.reduce((sum, item) => sum + item.amount, 0))}
+            s="Despesas em aberto neste mês"
+            I={Banknote}
+            t="violet"
+          />
         </div>
         <div className="grid wide">
           <section className="panel">
@@ -628,7 +753,7 @@ export function DashboardApp({
             ))}
             <div className="bar">
               <span>
-                Recebido neste mês
+                Recebido em {monthLabel(`${selectedMonth}-01`)}
                 <b>{money(paidThisMonth)}</b>
               </span>
               <div>
@@ -1336,7 +1461,13 @@ export function DashboardApp({
           </button>
           {currentAction ? <CreateButton kind={currentAction} onOpen={openCreate} /> : null}
         </header>
-        <div className="content">{view[screen]}</div>
+        <div className="content">
+          <MonthFilterContext.Provider
+            value={{ month: selectedMonth, months: monthChoices, onChange: setSelectedMonth }}
+          >
+            {view[screen]}
+          </MonthFilterContext.Provider>
+        </div>
       </main>
       {modal ? (
         <CreateRecordModal
