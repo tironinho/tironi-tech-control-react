@@ -5,6 +5,7 @@ import { useRouter } from "next/navigation";
 import { ArrowDownRight, ArrowUpRight, Check, Plus, X } from "lucide-react";
 import type { DashboardData } from "@/lib/dashboard-types";
 import { addMonths, isRecurringIncome, monthlyDates, normalizeDate } from "@/lib/recurrence";
+import { writeOffKind } from "@/lib/transaction-status";
 import { LEAD_CHANNELS, LEAD_TEMPERATURES, PROJECT_STAGES, PROPOSAL_STAGES } from "@/lib/pipeline";
 
 export type CreateKind = "transaction" | "expense" | "client" | "team" | "project" | "proposal";
@@ -490,16 +491,26 @@ export function CreateRecordModal({
                       <option value="receivable">A receber</option>
                       <option value="expected">Previsto</option>
                       <option value="paid">Recebido</option>
+                      <option value="defaulted">Calote</option>
+                      <option value="loss">Prejuízo</option>
                     </>
                   ) : (
                     <>
                       <option value="payable">A pagar</option>
                       <option value="paid">Pago</option>
+                      <option value="loss">Prejuízo</option>
                     </>
                   )}
                 </select>
               </label>
             </div>
+            {writeOffKind(payStatus) ? (
+              <p className="hint">
+                {payStatus === "defaulted"
+                  ? "O cliente não vai pagar. O valor sai de a receber e fica registrado como calote."
+                  : "Este valor entra como prejuízo e deixa de contar no fluxo de caixa."}
+              </p>
+            ) : null}
           </>
         )}
 
@@ -548,8 +559,12 @@ export function CreateRecordModal({
               <select value={payStatus} onChange={(event) => setPayStatus(event.target.value)}>
                 <option value="payable">A pagar</option>
                 <option value="paid">Pago</option>
+                <option value="loss">Prejuízo</option>
               </select>
             </label>
+            {writeOffKind(payStatus) ? (
+              <p className="hint">Este valor entra como prejuízo e deixa de contar no fluxo de caixa.</p>
+            ) : null}
           </>
         )}
 

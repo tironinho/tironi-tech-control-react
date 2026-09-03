@@ -70,6 +70,16 @@ export type DashboardData = {
     createdAt: string | null;
   }[];
   transactions: DashboardTransaction[];
+  writeOffs: {
+    id: number;
+    transactionId: number;
+    clientId: number | null;
+    kind: "calote" | "prejuizo";
+    amount: number;
+    description: string;
+    counterparty: string;
+    occurredOn: string;
+  }[];
   chart: { month: string; revenue: number; expenses: number }[];
   healthScore: number;
   conversionRate: number;

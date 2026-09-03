@@ -86,6 +86,33 @@ export const transactions = tironiTech.table(
   ],
 );
 
+export const writeOffs = tironiTech.table(
+  "write_offs",
+  {
+    id: bigint("id", { mode: "number" }).generatedAlwaysAsIdentity().primaryKey(),
+    transactionId: bigint("transaction_id", { mode: "number" })
+      .notNull()
+      .unique()
+      .references(() => transactions.id, { onDelete: "cascade" }),
+    clientId: bigint("client_id", { mode: "number" }).references(() => clients.id, {
+      onDelete: "set null",
+    }),
+    kind: text("kind").notNull(),
+    amount: numeric("amount", { precision: 12, scale: 2 }).notNull(),
+    description: text("description").notNull(),
+    counterparty: text("counterparty").notNull().default(""),
+    notes: text("notes"),
+    occurredOn: date("occurred_on").notNull(),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+    updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (table) => [
+    index("write_offs_occurred_on_idx").on(table.occurredOn),
+    index("write_offs_client_id_idx").on(table.clientId),
+    index("write_offs_kind_idx").on(table.kind),
+  ],
+);
+
 export const monthlyMetrics = tironiTech.table("monthly_metrics", {
   id: bigint("id", { mode: "number" }).generatedAlwaysAsIdentity().primaryKey(),
   month: date("month").notNull().unique(),

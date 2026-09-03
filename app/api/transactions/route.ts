@@ -30,7 +30,7 @@ const payloadSchema = z
     type: z.enum(["income", "expense"]),
     amount: z.number().positive(),
     dueDate: dateSchema,
-    status: z.enum(["receivable", "expected", "payable", "paid"]).optional(),
+    status: z.enum(["receivable", "expected", "payable", "paid", "defaulted", "loss"]).optional(),
     endsAt: z
       .union([dateSchema, z.literal(""), z.null()])
       .optional()

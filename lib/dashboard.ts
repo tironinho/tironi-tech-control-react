@@ -2,6 +2,7 @@ import "server-only";
 import type { DashboardData, PipelineData } from "@/lib/dashboard-types";
 import { monthsSince, toNumber } from "@/lib/money";
 import { isRecurringIncome, monthKey, monthlyDates, normalizeDate } from "@/lib/recurrence";
+import { isSettledStatus, writeOffKind } from "@/lib/transaction-status";
 import { mapLegacyProjectStage, mapLegacyProposalStage, proposalConversionRate } from "@/lib/pipeline";
 import { hashPassword } from "@/lib/password";
 import { getSupabase } from "@/lib/supabase";
@@ -14,7 +15,7 @@ function throwIfError(error: { message: string } | null, label: string) {
 
 function buildFinanceChart(
   metrics: { month: string; revenue: number; expenses: number }[],
-  transactions: { dueDate: string; type: "income" | "expense"; amount: number }[],
+  transactions: { dueDate: string; type: "income" | "expense"; amount: number; status: string }[],
 ) {
   const metricMap = new Map(
     metrics.map((row) => [monthKey(row.month), { revenue: row.revenue, expenses: row.expenses }]),
@@ -23,7 +24,7 @@ function buildFinanceChart(
   const txnExpenses = new Map<string, number>();
 
   for (const row of transactions) {
-    if (!row.dueDate) continue;
+    if (!row.dueDate || writeOffKind(row.status)) continue;
     const key = monthKey(row.dueDate);
     if (!/^\d{4}-\d{2}$/.test(key)) continue;
     if (row.type === "income") {
@@ -72,6 +73,7 @@ export async function getDashboardData(): Promise<DashboardData> {
     projectRows,
     proposalRows,
     transactionRows,
+    writeOffRows,
     metrics,
     settingRows,
     sectorRows,
@@ -82,6 +84,7 @@ export async function getDashboardData(): Promise<DashboardData> {
     supabase.from("projects").select("*").order("id"),
     supabase.from("proposals").select("*").order("id"),
     supabase.from("transactions").select("*").order("due_date"),
+    supabase.from("write_offs").select("*").order("occurred_on"),
     supabase.from("monthly_metrics").select("*").order("month"),
     supabase.from("settings").select("*"),
     supabase.from("sectors").select("*").order("name"),
@@ -93,6 +96,7 @@ export async function getDashboardData(): Promise<DashboardData> {
   throwIfError(projectRows.error, "projects");
   throwIfError(proposalRows.error, "proposals");
   throwIfError(transactionRows.error, "transactions");
+  throwIfError(writeOffRows.error, "write_offs");
   throwIfError(metrics.error, "monthly_metrics");
   throwIfError(settingRows.error, "settings");
   throwIfError(sectorRows.error, "sectors");
@@ -196,6 +200,16 @@ export async function getDashboardData(): Promise<DashboardData> {
       createdAt: row.created_at ?? null,
     })),
     transactions,
+    writeOffs: (writeOffRows.data ?? []).map((row) => ({
+      id: Number(row.id),
+      transactionId: Number(row.transaction_id),
+      clientId: row.client_id == null ? null : Number(row.client_id),
+      kind: row.kind === "prejuizo" ? "prejuizo" : "calote",
+      amount: toNumber(row.amount),
+      description: row.description,
+      counterparty: row.counterparty ?? "",
+      occurredOn: normalizeDate(row.occurred_on),
+    })),
     chart: buildFinanceChart(
       (metrics.data ?? []).map((row) => ({
         month: row.month,
@@ -340,6 +354,61 @@ function occurrenceStatus(index: number, type: "income" | "expense", status?: st
   return type === "income" ? "expected" : "payable";
 }
 
+async function syncWriteOff(row: {
+  id: number;
+  status: string;
+  client_id: number | null;
+  amount: string | number;
+  description: string;
+  counterparty: string;
+  due_date: string;
+}) {
+  const supabase = getSupabase();
+  const kind = writeOffKind(row.status);
+  if (!kind) {
+    const { error } = await supabase.from("write_offs").delete().eq("transaction_id", row.id);
+    throwIfError(error, "write_offs");
+    return;
+  }
+
+  const { error } = await supabase.from("write_offs").upsert(
+    {
+      transaction_id: Number(row.id),
+      client_id: row.client_id == null ? null : Number(row.client_id),
+      kind,
+      amount: Number(row.amount).toFixed(2),
+      description: row.description,
+      counterparty: row.counterparty ?? "",
+      occurred_on: normalizeDate(row.due_date) || row.due_date,
+      updated_at: new Date().toISOString(),
+    },
+    { onConflict: "transaction_id" },
+  );
+  throwIfError(error, "write_offs");
+}
+
+async function syncWriteOffsFor(filter: { id?: number; seriesId?: string | null }) {
+  const supabase = getSupabase();
+  let query = supabase
+    .from("transactions")
+    .select("id, status, client_id, amount, description, counterparty, due_date");
+  if (filter.id) query = query.eq("id", filter.id);
+  if (filter.seriesId) query = query.eq("series_id", filter.seriesId);
+  const { data, error } = await query;
+  throwIfError(error, "transactions");
+  for (const row of data ?? []) {
+    await syncWriteOff({
+      id: Number(row.id),
+      status: String(row.status),
+      client_id: row.client_id == null ? null : Number(row.client_id),
+      amount: row.amount,
+      description: String(row.description),
+      counterparty: String(row.counterparty ?? ""),
+      due_date: String(row.due_date),
+    });
+  }
+}
+
 export async function createTransaction(input: TransactionInput) {
   if (input.type === "income" && !input.clientId) {
     throw new Error("Selecione o cliente da receita.");
@@ -373,6 +442,7 @@ export async function createTransaction(input: TransactionInput) {
 
     throwIfError(error, "transactions");
     if (!data) throw new Error("Could not create transaction");
+    await syncWriteOffsFor({ id: Number(data.id) });
     return data;
   }
 
@@ -394,6 +464,7 @@ export async function createTransaction(input: TransactionInput) {
   const { data, error } = await supabase.from("transactions").insert(rows).select("id");
   throwIfError(error, "transactions");
   if (!data?.[0]) throw new Error("Could not create transaction");
+  await syncWriteOffsFor({ seriesId });
   return data[0];
 }
 
@@ -447,6 +518,7 @@ export async function updateTransaction(id: number, input: TransactionInput) {
 
     throwIfError(error, "transactions");
     if (!data) throw new Error("Lançamento não encontrado.");
+    await syncWriteOffsFor({ id: Number(data.id) });
     return data;
   }
 
@@ -456,9 +528,9 @@ export async function updateTransaction(id: number, input: TransactionInput) {
     : { data: [current], error: null };
   throwIfError(seriesError, "transactions");
 
-  const paidByMonth = new Map(
+  const settledByMonth = new Map(
     (seriesRows ?? [])
-      .filter((row) => row.status === "paid")
+      .filter((row) => isSettledStatus(String(row.status)))
       .map((row) => [monthKey(row.due_date), row]),
   );
 
@@ -467,9 +539,9 @@ export async function updateTransaction(id: number, input: TransactionInput) {
       .from("transactions")
       .delete()
       .eq("series_id", seriesId)
-      .neq("status", "paid");
+      .not("status", "in", "(paid,defaulted,loss)");
     throwIfError(deleteError, "transactions");
-  } else if (current.status !== "paid") {
+  } else if (!isSettledStatus(String(current.status))) {
     const { error: deleteError } = await supabase.from("transactions").delete().eq("id", id);
     throwIfError(deleteError, "transactions");
   }
@@ -486,16 +558,20 @@ export async function updateTransaction(id: number, input: TransactionInput) {
     recurrence: "monthly",
   };
 
-  for (const paid of paidByMonth.values()) {
-    const { error: paidError } = await supabase
+  for (const settled of settledByMonth.values()) {
+    const isCurrentMonth = monthKey(settled.due_date) === monthKey(current.due_date);
+    const { error: settledError } = await supabase
       .from("transactions")
-      .update(shared)
-      .eq("id", paid.id);
-    throwIfError(paidError, "transactions");
+      .update({
+        ...shared,
+        ...(isCurrentMonth ? { status: defaultStatus(input.type, input.status) } : {}),
+      })
+      .eq("id", settled.id);
+    throwIfError(settledError, "transactions");
   }
 
   const toInsert = dates
-    .filter((dueDate) => !paidByMonth.has(monthKey(dueDate)))
+    .filter((dueDate) => !settledByMonth.has(monthKey(dueDate)))
     .map((dueDate, index) => ({
       ...shared,
       due_date: dueDate,
@@ -510,6 +586,7 @@ export async function updateTransaction(id: number, input: TransactionInput) {
     throwIfError(insertError, "transactions");
   }
 
+  await syncWriteOffsFor({ seriesId });
   return { id };
 }
 

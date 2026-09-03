@@ -38,6 +38,7 @@ import {
 import type { DashboardData } from "@/lib/dashboard-types";
 import { formatDueDate, money, monthLabel, monthLongLabel } from "@/lib/money";
 import { addMonths, monthKey, monthStart } from "@/lib/recurrence";
+import { countsInCashflow, isOpenExpense, isOpenIncome, isWriteOffStatus, writeOffKindLabel } from "@/lib/transaction-status";
 import { CreateButton, CreateRecordModal, type CreateKind, type ModalEdit } from "@/components/create-record-modal";
 import { KanbanBoard } from "@/components/kanban-board";
 import { ConfirmDelete, RecordTools } from "@/components/record-tools";
@@ -76,6 +77,8 @@ function statusLabel(status: string) {
   if (status === "expected") return "Previsto";
   if (status === "payable") return "A pagar";
   if (status === "paid") return "Pago";
+  if (status === "defaulted") return "Calote";
+  if (status === "loss") return "Prejuízo";
   if (status === "at_risk" || status === "Atenção") return "Atenção";
   if (status === "on_track") return "No prazo";
   return status;
@@ -84,6 +87,7 @@ function statusLabel(status: string) {
 function statusTone(status: string) {
   if (status === "expected") return "blue";
   if (status === "payable" || status === "at_risk" || status === "Atenção") return "amber";
+  if (status === "defaulted" || status === "loss") return "red";
   return "";
 }
 
@@ -345,8 +349,8 @@ function MonthLedger({
     .sort((a, b) => a.dueDate.localeCompare(b.dueDate) || a.id - b.id);
   const income = rows.filter((item) => item.type === "income");
   const expenses = rows.filter((item) => item.type === "expense");
-  const incomeTotal = income.reduce((sum, item) => sum + item.amount, 0);
-  const expenseTotal = expenses.reduce((sum, item) => sum + item.amount, 0);
+  const incomeTotal = income.filter((item) => countsInCashflow(item.status)).reduce((sum, item) => sum + item.amount, 0);
+  const expenseTotal = expenses.filter((item) => countsInCashflow(item.status)).reduce((sum, item) => sum + item.amount, 0);
   const label = `${monthLabel(`${month}-01`)} ${month.slice(0, 4)}`;
 
   return (
@@ -371,7 +375,10 @@ function MonthLedger({
                     {item.description} · {item.category} · {statusLabel(item.status)}
                   </small>
                 </span>
-                <strong className="green">+ {money(item.amount)}</strong>
+                <strong className={isWriteOffStatus(item.status) ? "red" : "green"}>
+                  {isWriteOffStatus(item.status) ? "" : "+ "}
+                  {money(item.amount)}
+                </strong>
               </div>
             ))
           ) : (
@@ -401,6 +408,51 @@ function MonthLedger({
           )}
         </div>
       </div>
+    </section>
+  );
+}
+
+function WriteOffsPanel({
+  items,
+  month,
+}: {
+  items: DashboardData["writeOffs"];
+  month: string;
+}) {
+  const rows = items
+    .filter((item) => monthKey(item.occurredOn) === month)
+    .sort((a, b) => b.amount - a.amount);
+  const total = rows.reduce((sum, item) => sum + item.amount, 0);
+
+  return (
+    <section className="panel">
+      <Head
+        n="Calotes e prejuízos"
+        s={
+          rows.length
+            ? `${rows.length} registros em ${monthLabel(`${month}-01`)} · ${money(total)} fora do caixa`
+            : `Nenhum calote ou prejuízo em ${monthLabel(`${month}-01`)}`
+        }
+      />
+      {rows.length ? (
+        rows.map((item) => (
+          <div className="item" key={item.id}>
+            <i className="amber">
+              {formatDueDate(item.occurredOn).slice(0, 2)}
+              <small>{monthLabel(item.occurredOn)}</small>
+            </i>
+            <span>
+              <b>{item.counterparty || item.description}</b>
+              <small>
+                {writeOffKindLabel(item.kind)} · {item.description}
+              </small>
+            </span>
+            <strong className="red">{money(item.amount)}</strong>
+          </div>
+        ))
+      ) : (
+        <p className="empty">Marque o lançamento como Calote ou Prejuízo para registrar aqui.</p>
+      )}
     </section>
   );
 }
@@ -564,52 +616,56 @@ export function DashboardApp({
   }));
   const incomeRows = initialData.transactions.filter((item) => item.type === "income");
   const expenseRows = initialData.transactions.filter((item) => item.type === "expense");
-  const guaranteed = incomeRows
+  const activeIncome = incomeRows.filter((item) => countsInCashflow(item.status));
+  const activeExpenses = expenseRows.filter((item) => countsInCashflow(item.status));
+  const guaranteed = activeIncome
     .filter((item) => item.dueDate >= monthStart(today))
     .reduce((sum, item) => sum + item.amount, 0);
-  const projectedMonths = [...new Set(incomeRows.map((item) => monthKey(item.dueDate)))]
+  const projectedMonths = [...new Set(activeIncome.map((item) => monthKey(item.dueDate)))]
     .filter((key) => key >= monthKey(today))
     .sort()
     .map((key) => ({
       month: `${key}-01`,
-      amount: incomeRows
+      amount: activeIncome
         .filter((item) => monthKey(item.dueDate) === key)
         .reduce((sum, item) => sum + item.amount, 0),
     }));
   const recurringRows = expenseRows.filter((item) => item.category !== "Investimento");
   const investmentRows = expenseRows.filter((item) => item.category === "Investimento");
-  const recurringTotal = recurringRows.reduce((sum, item) => sum + item.amount, 0);
-  const investmentTotal = investmentRows.reduce((sum, item) => sum + item.amount, 0);
+  const recurringTotal = recurringRows.filter((item) => countsInCashflow(item.status)).reduce((sum, item) => sum + item.amount, 0);
+  const investmentTotal = investmentRows.filter((item) => countsInCashflow(item.status)).reduce((sum, item) => sum + item.amount, 0);
   const unpaidExpenses = expenseRows
-    .filter((item) => item.status !== "paid")
+    .filter((item) => isOpenExpense(item.status))
     .reduce((sum, item) => sum + item.amount, 0);
   const openReceivables = incomeRows
-    .filter((item) => item.status !== "paid")
+    .filter((item) => isOpenIncome(item.status))
     .reduce((sum, item) => sum + item.amount, 0);
-  const openReceivablesCount = incomeRows.filter((item) => item.status !== "paid").length;
+  const openReceivablesCount = incomeRows.filter((item) => isOpenIncome(item.status)).length;
   const paidThisMonth = incomeRows
     .filter((item) => monthKey(item.dueDate) === selectedMonth && item.status === "paid")
     .reduce((sum, item) => sum + item.amount, 0);
   const nextMonthKey = monthKey(addMonths(`${selectedMonth}-01`, 1));
   const nextMonthRevenue =
     orderedChart.find((row) => monthKey(row.month) === nextMonthKey)?.revenue ??
-    incomeRows
+    activeIncome
       .filter((item) => monthKey(item.dueDate) === nextMonthKey)
       .reduce((sum, item) => sum + item.amount, 0);
   const nextMonthExpenses =
     orderedChart.find((row) => monthKey(row.month) === nextMonthKey)?.expenses ??
-    expenseRows
+    activeExpenses
       .filter((item) => monthKey(item.dueDate) === nextMonthKey)
       .reduce((sum, item) => sum + item.amount, 0);
-  const recurringIncomeMonthly = incomeRows
+  const recurringIncomeMonthly = activeIncome
     .filter((item) => item.category === "Receita recorrente" && monthKey(item.dueDate) === selectedMonth)
     .reduce((sum, item) => sum + item.amount, 0);
   const monthIncomeRows = incomeRows.filter((item) => monthKey(item.dueDate) === selectedMonth);
   const monthExpenseRows = expenseRows.filter((item) => monthKey(item.dueDate) === selectedMonth);
-  const monthOpenReceivables = monthIncomeRows.filter((item) => item.status !== "paid");
-  const monthUnpaidExpenses = monthExpenseRows.filter((item) => item.status !== "paid");
-  const monthOverdueIncome = monthIncomeRows.filter((item) => item.status !== "paid" && item.dueDate < today);
-  const clientRevenue = [...incomeRows.reduce((map, item) => {
+  const monthOpenReceivables = monthIncomeRows.filter((item) => isOpenIncome(item.status));
+  const monthUnpaidExpenses = monthExpenseRows.filter((item) => isOpenExpense(item.status));
+  const monthOverdueIncome = monthIncomeRows.filter((item) => isOpenIncome(item.status) && item.dueDate < today);
+  const monthWriteOffs = initialData.writeOffs.filter((item) => monthKey(item.occurredOn) === selectedMonth);
+  const monthWriteOffTotal = monthWriteOffs.reduce((sum, item) => sum + item.amount, 0);
+  const clientRevenue = [...activeIncome.reduce((map, item) => {
     const key = item.counterparty || "Sem cliente";
     map.set(key, (map.get(key) ?? 0) + item.amount);
     return map;
@@ -617,7 +673,7 @@ export function DashboardApp({
     .map(([name, amount]) => ({ name, amount }))
     .sort((a, b) => b.amount - a.amount)
     .slice(0, 5);
-  const categoryBreakdown = [...incomeRows
+  const categoryBreakdown = [...activeIncome
     .filter((item) => monthKey(item.dueDate) === selectedMonth)
     .reduce((map, item) => {
       map.set(item.category, (map.get(item.category) ?? 0) + item.amount);
@@ -760,15 +816,25 @@ export function DashboardApp({
                 <i style={{ width: `${Math.min(100, percent(paidThisMonth, Math.max(revenue, 1)))}%` }} />
               </div>
             </div>
+            <div className="bar">
+              <span>
+                Calotes / prejuízos
+                <b>{money(monthWriteOffTotal)}</b>
+              </span>
+              <div>
+                <i style={{ width: `${Math.min(100, percent(monthWriteOffTotal, Math.max(revenue, monthWriteOffTotal, 1)))}%` }} />
+              </div>
+            </div>
           </section>
         </div>
         <MonthLedger month={selectedMonth} transactions={initialData.transactions} />
+        <WriteOffsPanel items={initialData.writeOffs} month={selectedMonth} />
         <div className="grid">
           <section className="panel">
             <Head n="Próximos recebimentos" s="Valores previstos para entrar" />
-            {incomeRows.filter((item) => item.dueDate >= today && item.status !== "paid").slice(0, 5).length ? (
+            {incomeRows.filter((item) => item.dueDate >= today && isOpenIncome(item.status)).slice(0, 5).length ? (
               incomeRows
-                .filter((item) => item.dueDate >= today && item.status !== "paid")
+                .filter((item) => item.dueDate >= today && isOpenIncome(item.status))
                 .slice(0, 5)
                 .map((item) => (
                   <div className="item" key={item.id}>
@@ -818,7 +884,7 @@ export function DashboardApp({
         <div className="metrics">
           <Metric n="Receita garantida" v={money(guaranteed)} s={`${projectedMonths.length} meses projetados`} I={FileText} />
           <Metric n="A receber em aberto" v={money(openReceivables)} s={`${openReceivablesCount} títulos`} I={ReceiptText} t="blue" />
-          <Metric n="Despesas em aberto" v={money(unpaidExpenses)} s={`${recurringRows.filter((item) => item.status !== "paid").length + investmentRows.filter((item) => item.status !== "paid").length} itens`} I={Banknote} t="amber" />
+          <Metric n="Despesas em aberto" v={money(unpaidExpenses)} s={`${recurringRows.filter((item) => isOpenExpense(item.status)).length + investmentRows.filter((item) => isOpenExpense(item.status)).length} itens`} I={Banknote} t="amber" />
           <Metric n="Resultado do próximo mês" v={money(nextMonthRevenue - nextMonthExpenses)} s={`${money(nextMonthRevenue)} − ${money(nextMonthExpenses)}`} I={TrendingUp} t="violet" />
         </div>
         <section className="panel biggraph">
@@ -826,6 +892,7 @@ export function DashboardApp({
           <Graph chart={financeChart} selected={selectedMonth} onSelect={setSelectedMonth} />
         </section>
         <MonthLedger month={selectedMonth} transactions={initialData.transactions} />
+        <WriteOffsPanel items={initialData.writeOffs} month={selectedMonth} />
         <div className="grid">
           <section className="panel">
             <Head
@@ -942,7 +1009,10 @@ export function DashboardApp({
                   <span>
                     <Status t={statusTone(item.status)}>{statusLabel(item.status)}</Status>
                   </span>
-                  <b className="green">+ {money(item.amount)}</b>
+                  <b className={isWriteOffStatus(item.status) ? "red" : "green"}>
+                    {isWriteOffStatus(item.status) ? "" : "+ "}
+                    {money(item.amount)}
+                  </b>
                   <RecordTools
                     onEdit={() => setModal({ kind: "transaction", edit: transactionEdit(item) })}
                     onDelete={() => {
